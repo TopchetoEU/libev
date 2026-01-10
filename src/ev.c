@@ -6,6 +6,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include <ctype.h>
 
 #ifdef EV_USE_UNIX
 	#include "./unix/core.c"
@@ -90,14 +94,17 @@ static void evi_push(ev_t ev, ev_ticket_t ticket, int err) {
 				ev_cond_wait(worker->cond, ev->lock);
 			}
 
-			int code = worker->worker(worker->args);
 			ev_ticket_t ticket = worker->ticket;
-
+			ev_worker_t cb = worker->worker;
+			void *args = worker->args;
 			worker->worker = NULL;
 			worker->args = NULL;
 			worker->ticket = 0;
 
-			evi_push(ev, ticket, code);
+			ev_mutex_unlock(ev->lock);
+			int code = cb(args);
+			ev_push(ev, ticket, code);
+			ev_mutex_lock(ev->lock);
 		}
 
 	end:
@@ -108,41 +115,167 @@ static void evi_push(ev_t ev, ev_ticket_t ticket, int err) {
 	}
 #endif
 
-
 static int evi_finalize(ev_t ev) {
-	while (ev->next_worker) {
-		ev_pool_worker_t curr = ev->next_worker;
-		ev->next_worker = curr->next;
+	#ifdef EV_USE_PTHREAD
+		while (ev->next_worker) {
+			ev_pool_worker_t curr = ev->next_worker;
+			ev->next_worker = curr->next;
 
-		curr->kys = true;
-		ev_cond_broadcast(curr->cond);
+			curr->kys = true;
+			ev_cond_broadcast(curr->cond);
+
+			ev_mutex_unlock(ev->lock);
+			ev_thread_free_join(curr->thread);
+			ev_mutex_lock(ev->lock);
+		}
+
+		ev->next_worker = NULL;
+
+		ev_cond_broadcast(ev->has_msg_cond);
 
 		ev_mutex_unlock(ev->lock);
-		ev_thread_free_join(curr->thread);
-		ev_mutex_lock(ev->lock);
-	}
-
-	ev->next_worker = NULL;
-
-	evi_stdio_free(ev->in, ev->out, ev->err);
-
-	#ifdef EV_USE_PTHREAD
-		ev_cond_broadcast(ev->has_msg_cond);
+		ev_mutex_free(ev->lock);
 	#endif
+
+	if (evi_stdio_free(ev->in, ev->out, ev->err) < 0) return -1;
 
 	#ifdef EV_USE_URING
 		if (evi_uring_free(ev->uring) < 0) return -1;
-	#endif
-
-	#ifdef EV_USE_WIN32
+	#elif defined EV_USE_WIN32
 		if (evi_win_free() < 0) return -1;
 	#endif
 
-	ev_mutex_unlock(ev->lock);
-
-	if (ev_mutex_free(ev->lock) < 0) return -1;
-
 	return 0;
+}
+
+static bool ev_parse_ipv4(const char *str, ev_addr_t *pres) {
+	ev_addr_t res;
+	res.type = EV_ADDR_IPV4;
+
+	const char *it = str;
+
+	for (int i = 0; i < 4; i++) {
+		uint64_t part = 0;
+
+		if (!isdigit(*it)) return false;
+
+		while (isdigit(*it)) {
+			if (part > 100) return false;
+			part = part * 10 + *it - '0';
+			it++;
+		}
+
+		if (part > 255) return false;
+
+		if (*it == '.') {
+			if (i == 3) return false;
+			it++;
+		}
+		if (*it == '\0' && i != 3) return false;
+
+		res.v4[i] = part;
+	}
+
+	if (*it != '\0') return false;
+
+	if (pres) *pres = res;
+	return true;
+}
+static bool ev_parse_ipv6(const char *str, ev_addr_t *pres) {
+	ev_addr_t res = { 0 };
+	res.type = EV_ADDR_IPV6;
+
+	const char *it = str;
+	int zeroes_i = -1;
+	int i = 0;
+
+	if (it[0] == ':' && it[1] == ':') {
+		it += 2;
+		zeroes_i = 0;
+
+		if (*it == '\0') {
+			*pres = res;
+			return true;
+		}
+	}
+
+	for (i = 0; i < 8; i++) {
+		if (!isxdigit(*it)) return false;
+
+		for (int j = 0; j < 4; j++) {
+			if (!isxdigit(*it)) break;
+
+			res.v6[i] <<= 4;
+			if (isdigit(*it)) res.v6[i] |= *it - '0';
+			if (islower(*it)) res.v6[i] |= *it - 'a' + 10;
+			if (isupper(*it)) res.v6[i] |= *it - 'A' + 10;
+			it++;
+		}
+
+		if (*it == ':') {
+			it++;
+			continue;
+		}
+
+		if (it[0] == ':' && it[1] == ':') {
+			if (zeroes_i != -1) return false;
+			zeroes_i = i;
+			it += 2;
+		}
+
+		if (*it == '\0') break;
+	}
+
+	if (*it != '\0') return false;
+
+	if (zeroes_i > 0) {
+		int trailing_n = i - zeroes_i;
+		memmove(res.v6 + (16 - trailing_n), res.v6 + zeroes_i, sizeof *res.v6 * trailing_n);
+	}
+
+	if (pres) *pres = res;
+	return true;
+}
+
+bool ev_parse_ip(const char *str, ev_addr_t *pres) {
+	if (ev_parse_ipv4(str, pres)) return true;
+	if (ev_parse_ipv6(str, pres)) return true;
+	return false;
+}
+bool ev_cmpaddr(ev_addr_t a, ev_addr_t b) {
+	if (a.type != b.type) return false;
+	if (a.type == EV_ADDR_IPV4) {
+		return memcmp(a.v4, b.v4, sizeof a.v4);
+	}
+	else {
+		return memcmp(a.v6, b.v6, sizeof a.v6);
+	}
+}
+
+ev_time_t ev_timeadd(ev_time_t a, ev_time_t b) {
+	ev_time_t res = { .sec = a.sec + b.sec, .nsec = a.nsec + b.nsec };
+	if (res.nsec > 1000000000) {
+		res.nsec -= 1000000000;
+		res.sec += 1;
+	}
+	return res;
+}
+ev_time_t ev_timesub(ev_time_t a, ev_time_t b) {
+	if (a.nsec < b.nsec) {
+		a.nsec += 1000000000;
+		a.sec -= 1;
+	}
+
+	ev_time_t res = { .sec = a.sec - b.sec, .nsec = a.nsec - b.nsec };
+	if (res.nsec > 1000000000) {
+		res.sec += 1;
+		res.nsec -= 1000000000;
+	}
+
+	return res;
+}
+int64_t ev_timems(ev_time_t time) {
+	return time.sec * 1000 + (time.nsec + 999999) / 1000000;
 }
 
 ev_t ev_init() {
@@ -155,39 +288,29 @@ ev_t ev_init() {
 
 	ev->next_msg = NULL;
 
-	if (evi_stdio_init(&ev->in, &ev->out, &ev->err) < 0) goto fail;
+	if (evi_stdio_init(&ev->in, &ev->out, &ev->err) < 0) goto fail_stdio;
 
 	#ifdef EV_USE_PTHREAD
-		if (ev_mutex_new(ev->lock) < 0) goto fail_stdio;
-		if (ev_cond_new(ev->has_msg_cond) < 0) goto fail_mutex;
+		ev_mutex_new(ev->lock);
+		ev_cond_new(ev->has_msg_cond);
 
 		ev->next_worker = NULL;
 	#endif
 
 	#ifdef EV_USE_URING
-		if (evi_uring_init(ev, ev->uring) < 0) goto fail_cond;
-	#endif
-
-	#ifdef EV_USE_WIN32
-		if (evi_win_init() < 0) goto fail_uring;
+		if (evi_uring_init(ev, ev->uring) < 0) goto fail_async;
+	#elif defined EV_USE_WIN32
+		if (evi_win_init() < 0) goto fail_async;
 	#endif
 
 	return ev;
-fail_uring:
-	#ifdef EV_USE_URING
-		evi_uring_free(ev->uring);
-	#endif
-fail_cond:
+fail_async:
 	#ifdef EV_USE_PTHREAD
 		ev_cond_free(ev->has_msg_cond);
-	#endif
-fail_mutex:
-	#ifdef EV_USE_PTHREAD
 		ev_mutex_free(ev->lock);
 	#endif
-fail_stdio:
 	evi_stdio_free(ev->in, ev->out, ev->err);
-fail:
+fail_stdio:
 	free(ev);
 	return NULL;
 }
@@ -245,10 +368,7 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync) {
 			ev_pool_worker_t pool_worker = malloc(sizeof *pool_worker);
 			if (!pool_worker) goto fallback; // is this correct, or should we return 0?
 
-			if (ev_cond_new(pool_worker->cond) < 0) {
-				free(pool_worker);
-				goto fallback;
-			}
+			ev_cond_new(pool_worker->cond);
 
 			pool_worker->ev = ev;
 			pool_worker->kys = false;
@@ -280,17 +400,25 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync) {
 	#endif
 }
 
-bool ev_poll(ev_t ev, bool wait, ev_ticket_t *pticket, int *perr) {
+ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, ev_ticket_t *pticket, int *perr) {
 	ev_mutex_lock(ev->lock);
 
 	if (!ev->next_msg && wait) {
 		while (!ev->next_msg && wait) {
 			if (ev->closing && ev->active_n == 0) {
 				evi_finalize(ev);
-				return false;
+				return EV_POLL_EMPTY;
 			}
 
-			ev_cond_wait(ev->has_msg_cond, ev->lock);
+			if (ptimeout) {
+				if (ev_cond_timewait(ev->has_msg_cond, ev->lock, *ptimeout) == ETIMEDOUT) {
+					ev_mutex_unlock(ev->lock);
+					return EV_POLL_TIMEOUT;
+				}
+			}
+			else {
+				ev_cond_wait(ev->has_msg_cond, ev->lock);
+			}
 		}
 	}
 
@@ -308,105 +436,7 @@ bool ev_poll(ev_t ev, bool wait, ev_ticket_t *pticket, int *perr) {
 
 	ev_mutex_unlock(ev->lock);
 
-	return true;
-}
-
-// TODO:Bad bad code, refactor!!
-
-static bool ev_parse_ipv4(const char *str, ev_addr_t *pres) {
-	ev_addr_t res;
-	res.type = EV_ADDR_IPV4;
-
-	const char *it = str;
-
-	for (int i = 0; i < 4; i++) {
-		uint64_t part = 0;
-		bool any = false;
-
-		while (*it >= '0' && *it <= '9') {
-			part *= 10;
-			part += *it - '0';
-			it++;
-			any = true;
-		}
-
-		if (!any) return false;
-		if (*it == '.') {
-			if (i == 3) return false;
-			it++;
-		}
-		if (*it == '\0' && i != 3) return false;
-
-		if (part > 255) return false;
-
-		res.v4[i] = part;
-	}
-
-	if (pres) *pres = res;
-	return true;
-}
-static bool ev_parse_ipv6(const char *str, ev_addr_t *pres) {
-	ev_addr_t res = { 0 };
-	res.type = EV_ADDR_IPV6;
-
-	const char *it = str;
-	int zeroes_i = -1;
-	int i = 0;
-
-	for (i = 0; i < 8; i++) {
-		if (*it == '\0') {
-			if (i == 0) return false;
-			break;
-		}
-
-		// Kinda shitty code but eh
-		if (i == 0 ?
-			it[0] == ':' && it[1] == ':' :
-			*it == ':'
-		) {
-			if (zeroes_i >= 0) return false;
-			it += i == 0 ? 2 : 1;
-			zeroes_i = i;
-		}
-
-		uint64_t part = 0;
-		bool any = false;
-
-		for (int j = 0; j < 4; j++) {
-			if (*it >= '0' && *it <= '9' ) {
-				part <<= 4;
-				part |= *it - '0';
-			}
-			else if (*it == 'a' && *it == 'f') {
-				part <<= 4;
-				part |= *it - 'a' + 10;
-			}
-			else if (*it == 'A' && *it == 'F') {
-				part <<= 4;
-				part |= *it - 'a' + 10;
-			}
-			else break;
-			any = true;
-		}
-
-		if (!any) return false;
-
-		res.v6[i] = part;
-	}
-
-	if (zeroes_i > 0) {
-		int trailing_n = i - zeroes_i;
-		memmove(res.v6 + (16 - trailing_n), res.v6 + zeroes_i, sizeof *res.v6 * trailing_n);
-	}
-
-	if (pres) *pres = res;
-	return true;
-}
-
-bool ev_parse_ip(const char *str, ev_addr_t *pres) {
-	if (ev_parse_ipv4(str, pres)) return true;
-	if (ev_parse_ipv6(str, pres)) return true;
-	return false;
+	return EV_POLL_OK;
 }
 
 // IO OPS
@@ -496,15 +526,15 @@ ev_ticket_t ev_open(ev_t ev, ev_fd_t *pres, const char *path, ev_open_flags_t fl
 		return ev_exec(ev, evi_open_worker, pargs, false);
 	#endif
 }
-ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
+ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
-		return evi_uring_read(ev->uring, fd, buff, n, offset);
+		return evi_uring_read(ev->uring, fd, (char*)buff, n, offset);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return 0;
 
 		pargs->fd = fd;
-		pargs->buff = buff;
+		pargs->buff = (char*)buff;
 		pargs->n = n;
 		pargs->offset = offset;
 		return ev_exec(ev, evi_read_worker, pargs, false);

@@ -1,23 +1,20 @@
 #pragma once
-#include <errno.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 
 #include "common.h"
 #include "ev.h"
 
-#include <windows.h>
-
-#include <errhandlingapi.h>
-#include <fileapi.h>
-#include <handleapi.h>
-#include <minwinbase.h>
-#include <minwindef.h>
-#include <processenv.h>
-#include <psdk_inc/_ip_types.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+
+#include <windows.h>
+#include <errhandlingapi.h>
+#include <fileapi.h>
+#include <handleapi.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <ws2ipdef.h>
@@ -81,13 +78,13 @@ static int evi_sync_open(ev_fd_t *pres, const char *path, ev_open_flags_t flags,
 	*pres = res;
 	return 0;
 }
-static int evi_sync_read(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
+static int evi_sync_read(ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
 	switch (fd->kind) {
 		case EVI_WIN_FILE: {
 			DWORD out_n;
 			OVERLAPPED overlapped = { .Pointer = (void*)offset };
 
-			if (!ReadFile(fd->file, buff, *n, &out_n, &overlapped)) {
+			if (!ReadFile(fd->file, (void*)buff, *n, &out_n, &overlapped)) {
 				if (GetLastError() == ERROR_HANDLE_EOF) {
 					*n = 0;
 					return 0;
@@ -99,7 +96,7 @@ static int evi_sync_read(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 			return 0;
 		}
 		case EVI_WIN_SOCK: {
-			int res = recv(fd->socket, buff, *n, 0);
+			int res = recv(fd->socket, (void*)buff, *n, 0);
 			if (res < 0) return evi_win_conv_sockerr(WSAGetLastError());
 
 			*n = res;
@@ -165,11 +162,11 @@ static int evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
 	buff->uid = 1000;
 	buff->gid = 1000;
 
-	buff->atime = evi_win_conv_timespec(info.ftLastAccessTime);
-	buff->mtime = evi_win_conv_timespec(info.ftLastWriteTime);
+	buff->atime = evi_win_conv_filetime(info.ftLastAccessTime);
+	buff->mtime = evi_win_conv_filetime(info.ftLastWriteTime);
 	// The semantics of this are dubious, do we equate the creation of a file to the last change of its metadata
 	// TODO: look into this further
-	buff->ctime = evi_win_conv_timespec(info.ftCreationTime);
+	buff->ctime = evi_win_conv_filetime(info.ftCreationTime);
 
 	buff->size = COMBINE64(info.nFileSizeLow, info.nFileSizeHigh);
 	// TODO: does windows expose a preferred blk size somehow? For now, we pick a reasonable arbitrary blksize
@@ -244,7 +241,6 @@ void ev_closedir(ev_t ev, ev_dir_t dir) {
 	FindClose(dir->hnd);
 	free(dir);
 }
-
 
 static int evi_sync_connect(ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	SOCKET sock = evi_win_mksock(proto, addr.type);
@@ -366,6 +362,28 @@ static int evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrin
 	return 0;
 }
 
+int ev_realtime(ev_time_t *pres) {
+	FILETIME time;
+	GetSystemTimePreciseAsFileTime(&time);
+	*pres = evi_win_conv_filetime(time);
+	return 0;
+}
+int ev_monotime(ev_time_t *pres) {
+	LARGE_INTEGER counter, freq;
+	QueryPerformanceCounter(&counter);
+	QueryPerformanceFrequency(&freq);
+
+	*pres = (ev_time_t) {
+		.sec = counter.QuadPart / freq.QuadPart,
+		.nsec = (uint64_t)(counter.QuadPart % freq.QuadPart) * 1000000000LL / freq.QuadPart,
+	};
+
+	// fprintf(stderr, "MONOTIME %lld.%.9u\n", pres->sec, pres->nsec);
+	// fprintf(stderr, "MONOTIME MS %lld\n", ev_timems(*pres));
+
+	return 0;
+}
+
 static int evi_stdio_init(ev_fd_t *in, ev_fd_t *out, ev_fd_t *err) {
 	*in = malloc(sizeof *in);
 	if (!*in) return ENOMEM;
@@ -381,9 +399,12 @@ static int evi_stdio_init(ev_fd_t *in, ev_fd_t *out, ev_fd_t *err) {
 	if (!*err) return ENOMEM;
 	(*err)->kind = EVI_WIN_FILE;
 	(*err)->file = GetStdHandle(STD_ERROR_HANDLE);
+
+	return 0;
 }
-static void evi_stdio_free(ev_fd_t in, ev_fd_t out, ev_fd_t err) {
+static int evi_stdio_free(ev_fd_t in, ev_fd_t out, ev_fd_t err) {
 	free(in);
 	free(out);
 	free(err);
+	return 0;
 }

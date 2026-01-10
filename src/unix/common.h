@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
 #include "ev.h"
@@ -58,9 +59,9 @@ static void evi_unix_conv_stat(ev_stat_t *dst, struct stat *src) {
 	dst->mode = src->st_mode & ~S_IFMT;
 	dst->uid = src->st_uid;
 	dst->gid = src->st_gid;
-	dst->atime = (struct timespec) { .tv_sec = src->st_atim.tv_sec, .tv_nsec = src->st_atim.tv_nsec };
-	dst->ctime = (struct timespec) { .tv_sec = src->st_ctim.tv_sec, .tv_nsec = src->st_ctim.tv_nsec };
-	dst->mtime = (struct timespec) { .tv_sec = src->st_mtim.tv_sec, .tv_nsec = src->st_mtim.tv_nsec };
+	dst->atime = (ev_time_t) { .sec = src->st_atim.tv_sec, .nsec = src->st_atim.tv_nsec };
+	dst->ctime = (ev_time_t) { .sec = src->st_ctim.tv_sec, .nsec = src->st_ctim.tv_nsec };
+	dst->mtime = (ev_time_t) { .sec = src->st_mtim.tv_sec, .nsec = src->st_mtim.tv_nsec };
 	dst->size = src->st_size;
 	dst->inode = src->st_ino;
 	dst->links = src->st_nlink;

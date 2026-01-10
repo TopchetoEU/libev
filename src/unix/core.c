@@ -1,8 +1,10 @@
+#pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
 #include "ev.h"
 #include "./common.h"
 #include <asm-generic/errno-base.h>
+#include <bits/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +15,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <netdb.h>
+#include <time.h>
 
 struct ev_dir {};
 
@@ -173,7 +176,7 @@ static int evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrin
 		bool found = false;
 
 		for (size_t j = 0; j < i; j++) {
-			if (!memcmp(&addr, &res->addr[j], sizeof addr)) {
+			if (ev_cmpaddr(addr, res->addr[j])) {
 				found = true;
 				break;
 			}
@@ -190,6 +193,19 @@ static int evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrin
 	if (list) freeaddrinfo(list);
 
 	*pres = res;
+	return 0;
+}
+
+int ev_realtime(ev_time_t *pres) {
+	struct timespec res;
+	if (clock_gettime(CLOCK_REALTIME, &res) < 0) return -1;
+	*pres = (ev_time_t) { .sec = res.tv_sec, .nsec = res.tv_nsec };
+	return 0;
+}
+int ev_monotime(ev_time_t *pres) {
+	struct timespec res;
+	if (clock_gettime(CLOCK_MONOTONIC, &res) < 0) return -1;
+	*pres = (ev_time_t) { .sec = res.tv_sec, .nsec = res.tv_nsec };
 	return 0;
 }
 

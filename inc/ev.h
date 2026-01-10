@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <sys/types.h>
 
 typedef struct ev *ev_t;
 
@@ -85,12 +84,17 @@ typedef enum {
 } ev_stat_type_t;
 
 typedef struct {
+	int64_t sec;
+	uint32_t nsec;
+} ev_time_t;
+
+typedef struct {
 	ev_stat_type_t type;
 	uint32_t mode;
 	uint32_t gid;
 	uint32_t uid;
 
-	struct timespec atime, mtime, ctime;
+	ev_time_t atime, mtime, ctime;
 
 	uint64_t size;
 	uint32_t blksize;
@@ -98,6 +102,29 @@ typedef struct {
 	uint64_t inode;
 	uint32_t links;
 } ev_stat_t;
+
+typedef enum {
+	EV_POLL_OK,
+	EV_POLL_EMPTY = -1,
+	EV_POLL_TIMEOUT = -2,
+} ev_poll_res_t;
+
+// Gets the time, elapsed since the unix epoch (CLOCK_REALTIME)
+int ev_realtime(ev_time_t *pres);
+// Gets a reliably and monotonically ticking time, unaffected by the system time (CLOCK_MONOTONIC)
+// You should use this instead of `ev_realtime` when dealing with ev_poll's timeouts, and in general,
+// when you care about time offsets more than the actual current time, which is almost always the case
+int ev_monotime(ev_time_t *pres);
+// Adds the two times together
+ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
+// Subtracts the two times
+ev_time_t ev_timesub(ev_time_t a, ev_time_t b);
+// Converts the time to a millisecond count
+int64_t ev_timems(ev_time_t time);
+
+// Parses the string to an IP address (ipv4/6 auto-detected)
+bool ev_parse_ip(const char *str, ev_addr_t *pres);
+bool ev_cmpaddr(ev_addr_t a, ev_addr_t b);
 
 // Creates an ev instance. Combines a queue and a thread pool
 ev_t ev_init();
@@ -130,7 +157,8 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync);
 //     If the loop is closed, returns false and frees the loop
 //     If block is false, returns false
 //     If block is true, blocks until a message is available and returns it
-bool ev_poll(ev_t ev, bool block, ev_ticket_t *pticket, int *perr);
+// EV_POLL_TIMEOUT is returned when (if specified), ptimeout is reached. ptimeout is relative to the monotonic clock
+ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, ev_ticket_t *pticket, int *perr);
 
 // Returns a reference to the stdin FD
 ev_fd_t ev_stdin(ev_t ev);
@@ -142,7 +170,7 @@ ev_fd_t ev_stderr(ev_t ev);
 // Equivalent to posix's open
 ev_ticket_t ev_open(ev_t ev, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // Equivalent to posix's pread
-ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
 // Equivalent to posix's pwrite
 ev_ticket_t ev_write(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset);
 // Equivalent to posix's fstat
@@ -159,9 +187,6 @@ ev_ticket_t ev_opendir(ev_t ev, ev_dir_t *pres, const char *path);
 ev_ticket_t ev_readdir(ev_t ev, ev_dir_t fd, char **pname);
 // Equivalent to posix's closedir
 void ev_closedir(ev_t ev, ev_dir_t fd);
-
-// Parses the string to an IP address (ipv4/6 auto-detected)
-bool ev_parse_ip(const char *str, ev_addr_t *pres);
 
 // Equivalent to socket() + bind()
 ev_ticket_t ev_bind(ev_t ev, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);

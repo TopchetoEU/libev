@@ -9,11 +9,6 @@
 #include <errno.h>
 
 #include <winsock2.h>
-#include <psdk_inc/_ip_types.h>
-#include <minwindef.h>
-#include <winerror.h>
-#include <errhandlingapi.h>
-#include <minwinbase.h>
 #include <ws2ipdef.h>
 
 // TODO: create unified error codes (preferably identical to libuv)
@@ -48,14 +43,14 @@ struct ev_dir {
 	WIN32_FIND_DATAA data;
 };
 
-static struct timespec evi_win_conv_timespec(FILETIME filetime) {
+static ev_time_t evi_win_conv_filetime(FILETIME filetime) {
 	static const uint64_t EPOCH_DIFFERENCE = 11644473600;
 
 	uint64_t total_ticks = ((uint64_t)filetime.dwHighDateTime << 32) | (uint64_t)filetime.dwLowDateTime;
 
-	return (struct timespec) {
-		.tv_sec = (time_t)(total_ticks / 100000000) - EPOCH_DIFFERENCE,
-		.tv_nsec = (long)(total_ticks % 100000000) * 100,
+	return (ev_time_t) {
+		.sec = (time_t)(total_ticks / 100000000) - EPOCH_DIFFERENCE,
+		.nsec = (long)(total_ticks % 100000000) * 100,
 	};
 }
 static int evi_win_conv_errno(int winerr) {
