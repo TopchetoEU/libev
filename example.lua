@@ -4,13 +4,13 @@ local libev = ffi.load "./bin/libev.so";
 local libc = ffi.C;
 
 ffi.cdef [[
-	struct timespec { long long tv_sec; long tv_nsec; };
 	typedef int64_t off_t;
 
 	void free(void *ptr);
 	const char *strerror(int err);
 
 	#line 14
+
 typedef struct ev *ev_t;
 
 // An integer, identifying a logical task.
@@ -89,12 +89,17 @@ typedef enum {
 } ev_stat_type_t;
 
 typedef struct {
+	int64_t sec;
+	uint32_t nsec;
+} ev_time_t;
+
+typedef struct {
 	ev_stat_type_t type;
 	uint32_t mode;
 	uint32_t gid;
 	uint32_t uid;
 
-	struct timespec atime, mtime, ctime;
+	ev_time_t atime, mtime, ctime;
 
 	uint64_t size;
 	uint32_t blksize;
@@ -102,6 +107,28 @@ typedef struct {
 	uint64_t inode;
 	uint32_t links;
 } ev_stat_t;
+
+typedef enum {
+	EV_POLL_OK,
+	EV_POLL_EMPTY = -1,
+	EV_POLL_TIMEOUT = -2,
+} ev_poll_res_t;
+
+// Gets the time, elapsed since the unix epoch (CLOCK_REALTIME)
+int ev_realtime(ev_time_t *pres);
+// Gets a reliably and monotonically ticking time, unaffected by the system time (CLOCK_MONOTONIC)
+// You should use this instead of `ev_realtime` when dealing with ev_poll's timeouts, and in general,
+// when you care about time offsets more than the actual current time, which is almost always the case
+int ev_monotime(ev_time_t *pres);
+// Adds the two times together
+ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
+// Subtracts the two times
+ev_time_t ev_timesub(ev_time_t a, ev_time_t b);
+// Converts the time to a millisecond count
+uint64_t ev_timems(ev_time_t time);
+
+// Parses the string to an IP address (ipv4/6 auto-detected)
+bool ev_parse_ip(const char *str, ev_addr_t *pres);
 
 // Creates an ev instance. Combines a queue and a thread pool
 ev_t ev_init();
@@ -134,7 +161,8 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync);
 //     If the loop is closed, returns false and frees the loop
 //     If block is false, returns false
 //     If block is true, blocks until a message is available and returns it
-bool ev_poll(ev_t ev, bool block, ev_ticket_t *pticket, int *perr);
+// EV_POLL_TIMEOUT is returned when (if specified), ptimeout is reached. ptimeout is relative to the monotonic clock
+ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, ev_ticket_t *pticket, int *perr);
 
 // Returns a reference to the stdin FD
 ev_fd_t ev_stdin(ev_t ev);
@@ -146,7 +174,7 @@ ev_fd_t ev_stderr(ev_t ev);
 // Equivalent to posix's open
 ev_ticket_t ev_open(ev_t ev, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // Equivalent to posix's pread
-ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
 // Equivalent to posix's pwrite
 ev_ticket_t ev_write(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset);
 // Equivalent to posix's fstat
@@ -164,9 +192,6 @@ ev_ticket_t ev_readdir(ev_t ev, ev_dir_t fd, char **pname);
 // Equivalent to posix's closedir
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
-// Parses the string to an IP address (ipv4/6 auto-detected)
-bool ev_parse_ip(const char *str, ev_addr_t *pres);
-
 // Equivalent to socket() + bind()
 ev_ticket_t ev_bind(ev_t ev, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to socket() + connect()
@@ -179,49 +204,88 @@ ev_ticket_t ev_getaddrinfo(ev_t ev, ev_addrinfo_t *pres, const char *name, ev_ad
 
 local tasks = {};
 local handles = {};
+local sleeps = {};
 
 local loop = libev.ev_init();
 
 local function invoke(handle, ...)
 	if type(handle) == "thread" then
 		return coroutine.resume(handle, ...);
-	else
+	elseif type(handle) == "function" then
 		return pcall(handle, ...);
+	elseif handle == nil then
+		return true, "invalid handle";
+	else
+		return false, "invalid handle";
 	end
 end
 
+local function realtime()
+	local pres = ffi.new "ev_time_t[1]";
+	assert(libev.ev_realtime(pres) == 0, "couldn't get realtime");
+	return assert(tonumber(pres[0].sec)) + assert(tonumber(pres[0].nsec)) / 1000000000;
+end
+local function monotime()
+	local pres = ffi.new "ev_time_t[1]";
+	assert(libev.ev_monotime(pres) == 0, "couldn't get realtime");
+	return assert(tonumber(pres[0].sec)) + assert(tonumber(pres[0].nsec)) / 1000000000;
+end
+
 local function run()
-	repeat
+	while true do
+		local curr = monotime();
 		local any = false;
 
-		if #tasks > 0 then
-			local old_tasks = tasks;
-			tasks = {};
-			any = true;
-
-			for i = 1, #old_tasks do
-				local ok, err = invoke(old_tasks[i]);
-				if not ok then return nil, err end
+		-- NOTE: this can be implemented as a sorted list, which would be MUCH faster for lots of concurrent sleeps, this is just the simplest logic
+		for i = #sleeps, 1, -1 do
+			if sleeps[i].time <= curr then
+				table.insert(tasks, sleeps[i].task);
+				table.remove(sleeps, i);
 			end
 		end
 
-		if not libev.ev_busy(loop) then
+		while true do
+			local task = table.remove(tasks, 1);
+			if not task then break end
+
+			local ok, err = invoke(task);
+			if not ok then return nil, err end
+		end
+
+		local soonest_sleep;
+		for i = #sleeps, 1, -1 do
+			if not soonest_sleep or soonest_sleep > sleeps[i].time then
+				soonest_sleep = sleeps[i].time;
+			end
+
+			any = true;
+		end
+
+		if not any and not libev.ev_busy(loop) then
 			libev.ev_free(loop);
 		end
 
-		any = true;
+		local ptimeout = nil;
+		if soonest_sleep then
+			ptimeout = ffi.new "ev_time_t[1]";
+			ptimeout[0].sec = soonest_sleep - soonest_sleep % 1;
+			ptimeout[0].nsec = (soonest_sleep % 1) * 1000000000;
+		end
 
 		local pticket = ffi.new "ev_ticket_t[1]";
 		local perr = ffi.new "int[1]";
-		if not libev.ev_poll(loop, true, pticket, perr) then break end
+		local code = assert(tonumber(libev.ev_poll(loop, true, ptimeout, pticket, perr)));
+		if code == 0 then
+			local ticket = assert(tonumber(pticket[0]), "invalid ticket");
+			local handle = handles[ticket];
+			handles[ticket] = nil;
 
-		local ticket = assert(tonumber(pticket[0]), "invalid ticket");
-		local handle = handles[ticket];
-		handles[ticket] = nil;
-
-		local ok, err = invoke(handle, perr[0]);
-		if not ok then return nil, err end
-	until not any;
+			local ok, err = invoke(handle, perr[0]);
+			if not ok then return nil, err end
+		elseif code == -1 then
+			break;
+		end
+	end
 
 	return true;
 end
@@ -353,7 +417,7 @@ local function getaddrinfo(name, flags)
 		if addr.type == 0 then
 			table.insert(res, ("%d.%d.%d.%d"):format(addr.v4[0], addr.v4[1], addr.v4[2], addr.v4[3]));
 		else
-			table.insert(res, ("%.4x:%.4x:%.4x:%.4x:%.4x:%.4x:%.4x:%.4x"):format(
+			table.insert(res, ("%x:%x:%x:%x:%x:%x:%x:%x"):format(
 				addr.v6[0], addr.v6[1],
 				addr.v6[2], addr.v6[3],
 				addr.v6[4], addr.v6[5],
@@ -379,6 +443,16 @@ end
 --- @param data string
 local function pwrite(fd, offset, data)
 	return rpwrite(fd, offset, ffi.cast("char*", data), #data);
+end
+
+local function sleep_until(time)
+	local cb = coroutine.running();
+	table.insert(sleeps, { time = time, task = cb });
+
+	return coroutine.yield();
+end
+local function sleep(secs)
+	return sleep_until(secs + monotime());
 end
 
 --- @param func fun(...)
@@ -410,10 +484,10 @@ end
 
 local stderr = libev.ev_stderr(loop);
 
-fork(function (url)
+local function netcat(url)
 	local sock = assert(open_tcp(url, 80));
 
-	assert(pwrite(sock, 0, "GET / HTTP/1.1\r\nHost: www.google.com\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
+	assert(pwrite(sock, 0, "GET / HTTP/1.1\r\nHost: " .. url .. "\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
 	while true do
 		local res = assert(pread(sock, 0, 10000));
 		if #res == 0 then break end
@@ -421,6 +495,18 @@ fork(function (url)
 		assert(pwrite(stderr, 0, res));
 	end
 	close(sock);
-end, ...);
+end
+
+fork(netcat, "www.topcheto.eu");
+fork(netcat, "www.google.com");
+fork(netcat, "dir.bg");
+fork(function ()
+	local base = monotime();
+
+	for i = 1, 500 do
+		sleep_until(base + i * .01);
+		print("MS " .. i * 10);
+	end
+end);
 
 assert(run());
