@@ -1,5 +1,6 @@
 override CCFLAGS += -Iinc
 override CCFLAGS += -Wall
+override CCFLAGS += -Wextra
 override CCFLAGS += -fPIC
 
 $(info $())
