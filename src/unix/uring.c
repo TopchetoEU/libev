@@ -32,7 +32,7 @@ typedef enum {
 } ev_uring_type_t;
 
 typedef struct {
-	ev_ticket_t ticket;
+	void *ticket;
 	ev_uring_type_t type;
 	union {
 		ev_fd_t *phnd;
@@ -72,58 +72,46 @@ static struct io_uring_sqe *evi_uring_get_sqe(ev_uring_t uring, ev_uring_udata_t
 	sqe->user_data = (uint64_t)udata;
 	return sqe;
 }
-static ev_uring_udata_t evi_uring_mkudata(ev_uring_type_t type, ev_ticket_t ticket) {
+static ev_uring_udata_t evi_uring_mkudata(ev_uring_type_t type, void *ticket) {
 	ev_uring_udata_t udata = malloc(sizeof *udata);
 	if (!udata) return NULL;
-
 	udata->type = type;
 	udata->ticket = ticket;
 	return udata;
 }
 
-static ev_ticket_t evi_uring_open(ev_uring_t uring, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
-	ev_ticket_t ticket = ev_next(uring->ev);
+static int evi_uring_open(ev_uring_t uring, void *ticket, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
-	if (!udata) return 0;
-
+	if (!udata) return -ENOMEM;
 	udata->phnd = pres;
 
 	io_uring_prep_open(evi_uring_get_sqe(uring, udata), path, evi_unix_conv_open_flags(flags), mode);
 	io_uring_submit(&uring->ctx);
-
-	return ticket;
+	return 0;
 }
-static ev_ticket_t evi_uring_read(ev_uring_t uring, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
-	ev_ticket_t ticket = ev_next(uring->ev);
+static int evi_uring_read(ev_uring_t uring, void *ticket, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return 0;
-
+	if (!udata) return -ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_read(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, buff, *n, offset);
 	io_uring_submit(&uring->ctx);
-
-	return ticket;
+	return 0;
 }
-static ev_ticket_t evi_uring_write(ev_uring_t uring, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
-	ev_ticket_t ticket = ev_next(uring->ev);
+static int evi_uring_write(ev_uring_t uring, void *ticket, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return 0;
-
+	if (!udata) return -ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_write(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, buff, *n, offset);
 	io_uring_submit(&uring->ctx);
-
-	return ticket;
+	return 0;
 }
-static ev_ticket_t evi_uring_stat(ev_uring_t uring, ev_fd_t fd, ev_stat_t *pres) {
-	ev_ticket_t ticket = ev_next(uring->ev);
+static int evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_stat_t *pres) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_STAT, ticket);
-	if (!udata) return 0;
+	if (!udata) return -ENOMEM;
 
 	int mask = 0;
-
 	mask |= STATX_MODE | STATX_TYPE;
 	mask |= STATX_UID | STATX_GID;
 	mask |= STATX_ATIME | STATX_CTIME | STATX_MTIME;
@@ -132,19 +120,16 @@ static ev_ticket_t evi_uring_stat(ev_uring_t uring, ev_fd_t fd, ev_stat_t *pres)
 
 	io_uring_prep_statx(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, "", AT_EMPTY_PATH, mask, &udata->stat.buff);
 	io_uring_submit(&uring->ctx);
-
-	return ticket;
+	return 0;
 }
 
-static ev_ticket_t evi_uring_accept(ev_uring_t uring, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
-	ev_ticket_t ticket = ev_next(uring->ev);
+static int evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
-	if (!udata) return 0;
+	if (!udata) return -ENOMEM;
 
 	io_uring_prep_accept(evi_uring_get_sqe(uring, udata), (int)(size_t)server, (void*)&udata->accept.addr, &udata->accept.len, 0);
 	io_uring_submit(&uring->ctx);
-
-	return ticket;
+	return 0;
 }
 
 

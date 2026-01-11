@@ -23,7 +23,7 @@
 
 typedef struct ev_msg {
 	struct ev_msg *next;
-	ev_ticket_t ticket;
+	void *udata;
 	int err;
 } *ev_msg_t;
 
@@ -35,7 +35,6 @@ struct ev {
 	ev_cond_t has_msg_cond;
 
 	ev_msg_t next_msg;
-	ev_ticket_t next_ticket;
 
 	ev_fd_t in, out, err;
 
@@ -48,16 +47,20 @@ struct ev {
 	#endif
 };
 
-static void evi_push(ev_t ev, ev_ticket_t ticket, int err) {
-	ev_msg_t msg = malloc(sizeof *msg); // TODO: propagate OOM error somehow
+static int evi_push(ev_t ev, void *udata, int err) {
+	ev_msg_t msg = malloc(sizeof *msg);
+	if (msg < 0) return -ENOMEM;
+
 	msg->next = ev->next_msg;
-	msg->ticket = ticket;
+	msg->udata = udata;
 	msg->err = err;
 	ev->next_msg = msg;
 
 	#ifdef EV_USE_PTHREAD
 		ev_cond_broadcast(ev->has_msg_cond);
 	#endif
+
+	return 0;
 }
 
 #ifdef EV_USE_PTHREAD
@@ -68,8 +71,8 @@ static void evi_push(ev_t ev, ev_ticket_t ticket, int err) {
 
 		ev_thread_t thread;
 
-		ev_ticket_t ticket;
 		ev_worker_t worker;
+		void *udata;
 		void *args;
 
 		bool kys;
@@ -94,16 +97,16 @@ static void evi_push(ev_t ev, ev_ticket_t ticket, int err) {
 				ev_cond_wait(worker->cond, ev->lock);
 			}
 
-			ev_ticket_t ticket = worker->ticket;
+			void *udata = worker->udata;
 			ev_worker_t cb = worker->worker;
 			void *args = worker->args;
 			worker->worker = NULL;
 			worker->args = NULL;
-			worker->ticket = 0;
+			worker->udata = NULL;
 
 			ev_mutex_unlock(ev->lock);
 			int code = cb(args);
-			ev_push(ev, ticket, code);
+			ev_push(ev, udata, code);
 			ev_mutex_lock(ev->lock);
 		}
 
@@ -284,7 +287,6 @@ ev_t ev_init() {
 
 	ev->active_n = 0;
 	ev->closing = false;
-	ev->next_ticket = 0;
 
 	ev->next_msg = NULL;
 
@@ -333,22 +335,14 @@ bool ev_closed(ev_t ev) {
 	return res;
 }
 
-ev_ticket_t ev_next(ev_t ev) {
+int ev_push(ev_t ev, void *udata, int err) {
 	ev_mutex_lock(ev->lock);
-	if (ev->next_ticket == 0) ev->next_ticket++;
-	ev_ticket_t res = ev->next_ticket++;
-	ev->active_n++;
+	int code = evi_push(ev, udata, err);
 	ev_mutex_unlock(ev->lock);
-	return res;
-}
-void ev_push(ev_t ev, ev_ticket_t ticket, int err) {
-	ev_mutex_lock(ev->lock);
-	evi_push(ev, ticket, err);
-	ev_mutex_unlock(ev->lock);
-}
-ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync) {
-	ev_ticket_t ticket = ev_next(ev);
 
+	return code;
+}
+int ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 	ev_mutex_lock(ev->lock);
 
 	#ifdef EV_USE_PTHREAD
@@ -358,15 +352,16 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync) {
 				if (!it->worker) {
 					it->worker = worker;
 					it->args = pargs;
-					it->ticket = ticket;
+					it->udata = udata;
 					ev_cond_signal(it->cond);
 					ev_mutex_unlock(ev->lock);
-					return ticket;
+					return 0;
 				}
 			}
 
 			ev_pool_worker_t pool_worker = malloc(sizeof *pool_worker);
-			if (!pool_worker) goto fallback; // is this correct, or should we return 0?
+			// TODO: should we fallback to the sync behavior, or should we return -ENOMEM?
+			if (!pool_worker) goto fallback;
 
 			ev_cond_new(pool_worker->cond);
 
@@ -375,7 +370,7 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync) {
 
 			pool_worker->worker = worker;
 			pool_worker->args = pargs;
-			pool_worker->ticket = ticket;
+			pool_worker->udata = udata;
 
 			pool_worker->next = ev->next_worker;
 			ev->next_worker = pool_worker;
@@ -387,20 +382,20 @@ ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync) {
 			}
 
 			ev_mutex_unlock(ev->lock);
-			return ticket;
+			return 0;
 		}
 		else fallback: {
 	#endif
 			int code = worker(pargs);
-			evi_push(ev, ticket, code);
+			int errcode = evi_push(ev, udata, code);
 			ev_mutex_unlock(ev->lock);
-			return ticket;
+			return errcode;
 	#ifdef EV_USE_PTHREAD
 		}
 	#endif
 }
 
-ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, ev_ticket_t *pticket, int *perr) {
+ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **pudata, int *perr) {
 	ev_mutex_lock(ev->lock);
 
 	if (!ev->next_msg && wait) {
@@ -429,7 +424,7 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, ev_ticket_t
 
 	ev->active_n--;
 
-	*pticket = msg->ticket;
+	*pudata = msg->udata;
 	*perr = msg->err;
 
 	free(msg);
@@ -512,128 +507,128 @@ static int evi_getaddrinfo_worker(void *pargs) {
 	return evi_sync_getaddrinfo(args.pres, args.name, args.flags);
 }
 
-ev_ticket_t ev_open(ev_t ev, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+int ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	#ifdef EV_USE_URING
-		return evi_uring_open(ev->uring, pres, path, flags, mode);
+		return evi_uring_open(ev->uring, udata, pres, path, flags, mode);
 	#else
 		evi_open_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return 0;
+		if (!pargs) return -ENOMEM;
 
 		pargs->pres = pres;
 		pargs->path = path;
 		pargs->flags = flags;
 		pargs->mode = mode;
-		return ev_exec(ev, evi_open_worker, pargs, false);
+		return ev_exec(ev, udata, evi_open_worker, pargs, false);
 	#endif
 }
-ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
+int ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
-		return evi_uring_read(ev->uring, fd, (char*)buff, n, offset);
+		return evi_uring_read(ev->uring, udata, fd, (char*)buff, n, offset);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return 0;
+		if (!pargs) return -ENOMEM;
 
 		pargs->fd = fd;
 		pargs->buff = (char*)buff;
 		pargs->n = n;
 		pargs->offset = offset;
-		return ev_exec(ev, evi_read_worker, pargs, false);
+		return ev_exec(ev, udata, evi_read_worker, pargs, false);
 	#endif
 }
-ev_ticket_t ev_write(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
+int ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
-		return evi_uring_write(ev->uring, fd, buff, n, offset);
+		return evi_uring_write(ev->uring, udata, fd, buff, n, offset);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return 0;
+		if (!pargs) return -ENOMEM;
 
 		pargs->fd = fd;
 		pargs->buff = buff;
 		pargs->n = n;
 		pargs->offset = offset;
-		return ev_exec(ev, evi_write_worker, pargs, false);
+		return ev_exec(ev, udata, evi_write_worker, pargs, false);
 	#endif
 }
-ev_ticket_t ev_stat(ev_t ev, ev_fd_t fd, ev_stat_t *buff) {
+int ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {
 	#ifdef EV_USE_URING
-		return evi_uring_stat(ev->uring, fd, buff);
+		return evi_uring_stat(ev->uring, udata, fd, buff);
 	#else
 		evi_stat_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return 0;
+		if (!pargs) return -ENOMEM;
 
 		pargs->fd = fd;
 		pargs->buff = buff;
-		return ev_exec(ev, evi_stat_worker, pargs, false);
+		return ev_exec(ev, udata, evi_stat_worker, pargs, false);
 	#endif
 }
 
-ev_ticket_t ev_mkdir(ev_t ev, const char *path, int mode) {
+int ev_mkdir(ev_t ev, void *udata, const char *path, int mode) {
 	evi_mkdir_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return 0;
+	if (!pargs) return -ENOMEM;
 
 	pargs->path = path;
 	pargs->mode = mode;
-	return ev_exec(ev, evi_mkdir_worker, pargs, false);
+	return ev_exec(ev, udata, evi_mkdir_worker, pargs, false);
 }
-ev_ticket_t ev_opendir(ev_t ev, ev_dir_t *pres, const char *path) {
+int ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path) {
 	evi_opendir_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return 0;
+	if (!pargs) return -ENOMEM;
 
 	pargs->pres = pres;
 	pargs->path = path;
-	return ev_exec(ev, evi_opendir_worker, pargs, false);
+	return ev_exec(ev, udata, evi_opendir_worker, pargs, false);
 }
-ev_ticket_t ev_readdir(ev_t ev, ev_dir_t dir, char **pname) {
+int ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
 	evi_readdir_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return 0;
+	if (!pargs) return -ENOMEM;
 
 	pargs->dir = dir;
 	pargs->pname = pname;
-	return ev_exec(ev, evi_readdir_worker, pargs, false);
+	return ev_exec(ev, udata, evi_readdir_worker, pargs, false);
 }
 
-ev_ticket_t ev_connect(ev_t ev, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+int ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return 0;
+	if (!pargs) return -ENOMEM;
 
 	pargs->pres = pres;
 	pargs->proto = proto;
 	pargs->addr = addr;
 	pargs->port = port;
-	return ev_exec(ev, evi_connect_worker, pargs, false);
+	return ev_exec(ev, udata, evi_connect_worker, pargs, false);
 }
-ev_ticket_t ev_bind(ev_t ev, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+int ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return 0;
+	if (!pargs) return -ENOMEM;
 
 	pargs->pres = pres;
 	pargs->proto = proto;
 	pargs->addr = addr;
 	pargs->port = port;
-	return ev_exec(ev, evi_bind_worker, pargs, false);
+	return ev_exec(ev, udata, evi_bind_worker, pargs, false);
 }
-ev_ticket_t ev_accept(ev_t ev, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
+int ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
 	#ifdef EV_USE_URING
-		return evi_uring_accept(ev->uring, pres, paddr, pport, server);
+		return evi_uring_accept(ev->uring, udata, pres, paddr, pport, server);
 	#else
 		evi_accept_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return 0;
+		if (!pargs) return -ENOMEM;
 
 		pargs->pres = pres;
 		pargs->paddr = paddr;
 		pargs->pport = pport;
 		pargs->server = server;
-		return ev_exec(ev, evi_accept_worker, pargs, false);
+		return ev_exec(ev, udata, evi_accept_worker, pargs, false);
 	#endif
 }
-ev_ticket_t ev_getaddrinfo(ev_t ev, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
+int ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	evi_getaddrinfo_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return 0;
+	if (!pargs) return -ENOMEM;
 
 	pargs->pres = pres;
 	pargs->name = name;
 	pargs->flags = flags;
-	return ev_exec(ev, evi_getaddrinfo_worker, pargs, false);
+	return ev_exec(ev, udata, evi_getaddrinfo_worker, pargs, false);
 }
 
 ev_fd_t ev_stdin(ev_t ev) {

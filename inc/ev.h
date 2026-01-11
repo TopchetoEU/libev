@@ -8,12 +8,6 @@
 
 typedef struct ev *ev_t;
 
-// An integer, identifying a logical task.
-// ev_poll will return this + an error code, and a callee
-// will use the ticket to identify what request it is associated to
-// A value of 0 is considered invalid
-typedef size_t ev_ticket_t;
-
 // Used to deploy a sync workload in an ev-managed thread
 typedef int (*ev_worker_t)(void *pargs);
 
@@ -115,6 +109,7 @@ int ev_realtime(ev_time_t *pres);
 // You should use this instead of `ev_realtime` when dealing with ev_poll's timeouts, and in general,
 // when you care about time offsets more than the actual current time, which is almost always the case
 int ev_monotime(ev_time_t *pres);
+
 // Adds the two times together
 ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
 // Subtracts the two times
@@ -124,6 +119,7 @@ int64_t ev_timems(ev_time_t time);
 
 // Parses the string to an IP address (ipv4/6 auto-detected)
 bool ev_parse_ip(const char *str, ev_addr_t *pres);
+// Returns true if both addresses are equal
 bool ev_cmpaddr(ev_addr_t a, ev_addr_t b);
 
 // Creates an ev instance. Combines a queue and a thread pool
@@ -142,23 +138,21 @@ bool ev_busy(ev_t ev);
 // Well-behaving tasks will check this first, and will ev_push an error code, if this returns true
 bool ev_closed(ev_t ev);
 
-// Gets the next unique ticket
-ev_ticket_t ev_next(ev_t ev);
-// Pushes the given ticket to the message queue
-// NOTE: using the same ticket twice is UB
-void ev_push(ev_t ev, ev_ticket_t ticket, int err);
+// Pushes a result to the message queue
+// NOTE: using the same udata twice is UB
+int ev_push(ev_t ev, void *udata, int err);
 // Calls worker with pargs in a ev-managed thread and returns a new ticket to it
 // Internally, this is used as a fallback for ops, not supported by AIO
 // sync - if true, will side-step the thread pool and will instead call the worker immediately
-ev_ticket_t ev_exec(ev_t ev, ev_worker_t worker, void *pargs, bool sync);
+int ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync);
 
-// Gets the next ticket in the message queue
+// Gets the next message in the message queue
 // If the queue is empty:
-//     If the loop is closed, returns false and frees the loop
-//     If block is false, returns false
+//     If the loop is closed, returns EV_POLL_EMPTY and frees the loop
+//     If block is false, returns EV_POLL_EMPTY
 //     If block is true, blocks until a message is available and returns it
-// EV_POLL_TIMEOUT is returned when (if specified), ptimeout is reached. ptimeout is relative to the monotonic clock
-ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, ev_ticket_t *pticket, int *perr);
+// If ptimeout is not NULL and is reached, EV_POLL_TIMEOUT is returned. ptimeout is relative to the monotonic clock
+ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, void **pudata, int *perr);
 
 // Returns a reference to the stdin FD
 ev_fd_t ev_stdin(ev_t ev);
@@ -167,32 +161,37 @@ ev_fd_t ev_stdout(ev_t ev);
 // Returns a reference to the stderr FD
 ev_fd_t ev_stderr(ev_t ev);
 
+// These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
+// All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
+
+// Exceptions to the model are the ev_close and ev_closedir functions, which are synchronous - this makes them fit to be called in a GC
+
 // Equivalent to posix's open
-ev_ticket_t ev_open(ev_t ev, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
+int ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // Equivalent to posix's pread
-ev_ticket_t ev_read(ev_t ev, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
+int ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
 // Equivalent to posix's pwrite
-ev_ticket_t ev_write(ev_t ev, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+int ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
 // Equivalent to posix's fstat
-ev_ticket_t ev_stat(ev_t ev, ev_fd_t fd, ev_stat_t *buff);
+int ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
 // Unlike all other functions, close will complete synchronously, and will never error out
 // Equivalent to posix's close
 void ev_close(ev_t ev, ev_fd_t fd);
 
 // Equivalent to posix's mkdir
-ev_ticket_t ev_mkdir(ev_t ev, const char *path, int mode);
+int ev_mkdir(ev_t ev, void *udata, const char *path, int mode);
 // Equivalent to posix's opendir
-ev_ticket_t ev_opendir(ev_t ev, ev_dir_t *pres, const char *path);
+int ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
-ev_ticket_t ev_readdir(ev_t ev, ev_dir_t fd, char **pname);
+int ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 // Equivalent to posix's closedir
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_ticket_t ev_bind(ev_t ev, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+int ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to socket() + connect()
-ev_ticket_t ev_connect(ev_t ev, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+int ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to posix's accept
-ev_ticket_t ev_accept(ev_t ev, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
+int ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
 // Equivalent to posix's getaddrinfo (with a few simplifications)
-ev_ticket_t ev_getaddrinfo(ev_t ev, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
+int ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
