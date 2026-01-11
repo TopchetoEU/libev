@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ev/conf.h"
+#include "ev/errno.h"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -140,11 +141,11 @@ bool ev_closed(ev_t ev);
 
 // Pushes a result to the message queue
 // NOTE: using the same udata twice is UB
-int ev_push(ev_t ev, void *udata, int err);
+ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err);
 // Calls worker with pargs in a ev-managed thread and returns a new ticket to it
 // Internally, this is used as a fallback for ops, not supported by AIO
 // sync - if true, will side-step the thread pool and will instead call the worker immediately
-int ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync);
+ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync);
 
 // Gets the next message in the message queue
 // If the queue is empty:
@@ -167,31 +168,33 @@ ev_fd_t ev_stderr(ev_t ev);
 // Exceptions to the model are the ev_close and ev_closedir functions, which are synchronous - this makes them fit to be called in a GC
 
 // Equivalent to posix's open
-int ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
+ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // Equivalent to posix's pread
-int ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
+ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
 // Equivalent to posix's pwrite
-int ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+// Equivalent to posix's stat
+ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
 // Equivalent to posix's fstat
-int ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
+ev_code_t ev_fstat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
 // Unlike all other functions, close will complete synchronously, and will never error out
 // Equivalent to posix's close
 void ev_close(ev_t ev, ev_fd_t fd);
 
 // Equivalent to posix's mkdir
-int ev_mkdir(ev_t ev, void *udata, const char *path, int mode);
+ev_code_t ev_mkdir(ev_t ev, void *udata, const char *path, int mode);
 // Equivalent to posix's opendir
-int ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
+ev_code_t ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
-int ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
+ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 // Equivalent to posix's closedir
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-int ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to socket() + connect()
-int ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to posix's accept
-int ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
+ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
 // Equivalent to posix's getaddrinfo (with a few simplifications)
-int ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
+ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);

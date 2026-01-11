@@ -1,4 +1,5 @@
 // Due to how this project is structured, some functions are erroneously marked as "unused"
+#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 
 #include "ev.h"
@@ -47,9 +48,9 @@ struct ev {
 	#endif
 };
 
-static int evi_push(ev_t ev, void *udata, int err) {
+static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 	ev_msg_t msg = malloc(sizeof *msg);
-	if (msg < 0) return -ENOMEM;
+	if (!msg) return EV_ENOMEM;
 
 	msg->next = ev->next_msg;
 	msg->udata = udata;
@@ -60,7 +61,7 @@ static int evi_push(ev_t ev, void *udata, int err) {
 		ev_cond_broadcast(ev->has_msg_cond);
 	#endif
 
-	return 0;
+	return EV_OK;
 }
 
 #ifdef EV_USE_PTHREAD
@@ -335,14 +336,14 @@ bool ev_closed(ev_t ev) {
 	return res;
 }
 
-int ev_push(ev_t ev, void *udata, int err) {
+ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 	ev_mutex_lock(ev->lock);
-	int code = evi_push(ev, udata, err);
+	ev_code_t code = evi_push(ev, udata, err);
 	ev_mutex_unlock(ev->lock);
 
 	return code;
 }
-int ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
+ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 	ev_mutex_lock(ev->lock);
 
 	#ifdef EV_USE_PTHREAD
@@ -355,7 +356,7 @@ int ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 					it->udata = udata;
 					ev_cond_signal(it->cond);
 					ev_mutex_unlock(ev->lock);
-					return 0;
+					return EV_OK;
 				}
 			}
 
@@ -507,7 +508,7 @@ static int evi_getaddrinfo_worker(void *pargs) {
 	return evi_sync_getaddrinfo(args.pres, args.name, args.flags);
 }
 
-int ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	#ifdef EV_USE_URING
 		return evi_uring_open(ev->uring, udata, pres, path, flags, mode);
 	#else
@@ -521,7 +522,7 @@ int ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags
 		return ev_exec(ev, udata, evi_open_worker, pargs, false);
 	#endif
 }
-int ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
+ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
 		return evi_uring_read(ev->uring, udata, fd, (char*)buff, n, offset);
 	#else
@@ -535,7 +536,7 @@ int ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_
 		return ev_exec(ev, udata, evi_read_worker, pargs, false);
 	#endif
 }
-int ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
+ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
 		return evi_uring_write(ev->uring, udata, fd, buff, n, offset);
 	#else
@@ -549,7 +550,7 @@ int ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t off
 		return ev_exec(ev, udata, evi_write_worker, pargs, false);
 	#endif
 }
-int ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {
+ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {
 	#ifdef EV_USE_URING
 		return evi_uring_stat(ev->uring, udata, fd, buff);
 	#else
@@ -562,7 +563,7 @@ int ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {
 	#endif
 }
 
-int ev_mkdir(ev_t ev, void *udata, const char *path, int mode) {
+ev_code_t ev_mkdir(ev_t ev, void *udata, const char *path, int mode) {
 	evi_mkdir_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return -ENOMEM;
 
@@ -570,7 +571,7 @@ int ev_mkdir(ev_t ev, void *udata, const char *path, int mode) {
 	pargs->mode = mode;
 	return ev_exec(ev, udata, evi_mkdir_worker, pargs, false);
 }
-int ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path) {
+ev_code_t ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path) {
 	evi_opendir_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return -ENOMEM;
 
@@ -578,7 +579,7 @@ int ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path) {
 	pargs->path = path;
 	return ev_exec(ev, udata, evi_opendir_worker, pargs, false);
 }
-int ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
+ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
 	evi_readdir_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return -ENOMEM;
 
@@ -587,7 +588,7 @@ int ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
 	return ev_exec(ev, udata, evi_readdir_worker, pargs, false);
 }
 
-int ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return -ENOMEM;
 
@@ -597,7 +598,7 @@ int ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t 
 	pargs->port = port;
 	return ev_exec(ev, udata, evi_connect_worker, pargs, false);
 }
-int ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return -ENOMEM;
 
@@ -607,7 +608,7 @@ int ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t add
 	pargs->port = port;
 	return ev_exec(ev, udata, evi_bind_worker, pargs, false);
 }
-int ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
+ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
 	#ifdef EV_USE_URING
 		return evi_uring_accept(ev->uring, udata, pres, paddr, pport, server);
 	#else
@@ -621,7 +622,7 @@ int ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *p
 		return ev_exec(ev, udata, evi_accept_worker, pargs, false);
 	#endif
 }
-int ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
+ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	evi_getaddrinfo_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return -ENOMEM;
 

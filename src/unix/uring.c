@@ -1,3 +1,4 @@
+#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
@@ -75,41 +76,43 @@ static struct io_uring_sqe *evi_uring_get_sqe(ev_uring_t uring, ev_uring_udata_t
 static ev_uring_udata_t evi_uring_mkudata(ev_uring_type_t type, void *ticket) {
 	ev_uring_udata_t udata = malloc(sizeof *udata);
 	if (!udata) return NULL;
+
 	udata->type = type;
 	udata->ticket = ticket;
 	return udata;
 }
 
-static int evi_uring_open(ev_uring_t uring, void *ticket, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+static ev_code_t evi_uring_open(ev_uring_t uring, void *ticket, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
-	if (!udata) return -ENOMEM;
+	if (!udata) return EV_ENOMEM;
 	udata->phnd = pres;
 
 	io_uring_prep_open(evi_uring_get_sqe(uring, udata), path, evi_unix_conv_open_flags(flags), mode);
 	io_uring_submit(&uring->ctx);
-	return 0;
+	return EV_OK;
 }
-static int evi_uring_read(ev_uring_t uring, void *ticket, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
+static ev_code_t evi_uring_read(ev_uring_t uring, void *ticket, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return -ENOMEM;
+	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_read(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, buff, *n, offset);
 	io_uring_submit(&uring->ctx);
-	return 0;
+	return EV_OK;
 }
-static int evi_uring_write(ev_uring_t uring, void *ticket, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
+static ev_code_t evi_uring_write(ev_uring_t uring, void *ticket, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return -ENOMEM;
+	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_write(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, buff, *n, offset);
 	io_uring_submit(&uring->ctx);
-	return 0;
+	return EV_OK;
 }
-static int evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_stat_t *pres) {
+static ev_code_t evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_stat_t *pres) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_STAT, ticket);
-	if (!udata) return -ENOMEM;
+	if (!udata) return EV_ENOMEM;
+	udata->stat.pres = pres;
 
 	int mask = 0;
 	mask |= STATX_MODE | STATX_TYPE;
@@ -120,16 +123,19 @@ static int evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_stat_t 
 
 	io_uring_prep_statx(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, "", AT_EMPTY_PATH, mask, &udata->stat.buff);
 	io_uring_submit(&uring->ctx);
-	return 0;
+	return EV_OK;
 }
 
-static int evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
+static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
-	if (!udata) return -ENOMEM;
+	if (!udata) return EV_ENOMEM;
+	udata->accept.pres = pres;
+	udata->accept.paddr = paddr;
+	udata->accept.pport = pport;
 
 	io_uring_prep_accept(evi_uring_get_sqe(uring, udata), (int)(size_t)server, (void*)&udata->accept.addr, &udata->accept.len, 0);
 	io_uring_submit(&uring->ctx);
-	return 0;
+	return EV_OK;
 }
 
 
@@ -138,6 +144,7 @@ static void *evi_uring_worker(void *arg) {
 
 	while (!uring->kys) {
 		struct io_uring_cqe *cqe;
+
 		int code = io_uring_wait_cqe(&uring->ctx, &cqe);
 		if (code == -EINTR) continue;
 		if (!cqe->user_data) break;
@@ -145,7 +152,7 @@ static void *evi_uring_worker(void *arg) {
 		ev_uring_udata_t udata = (ev_uring_udata_t)(size_t)cqe->user_data;
 
 		if (cqe->res < 0) {
-			ev_push(uring->ev, udata->ticket, -cqe->res);
+			ev_push(uring->ev, udata->ticket, evi_unix_conv_errno(-cqe->res));
 		}
 		else {
 			switch (udata->type) {
@@ -175,17 +182,19 @@ static void *evi_uring_worker(void *arg) {
 }
 
 
-static int evi_uring_init(ev_t ev, ev_uring_t uring) {
+static ev_code_t evi_uring_init(ev_t ev, ev_uring_t uring) {
 	uring->ev = ev;
 	uring->kys = false;
 
-	if (io_uring_queue_init(1024, &uring->ctx, 0) < 0) return -1;
+	int code;
 
-	if (ev_thread_new(uring->worker, evi_uring_worker, uring) < 0) return -1;
+	if ((code = io_uring_queue_init(1024, &uring->ctx, 0)) < 0) return evi_unix_conv_errno(code);
 
-	return 0;
+	if ((code = ev_thread_new(uring->worker, evi_uring_worker, uring) < 0)) return evi_unix_conv_errno(code);
+
+	return EV_OK;
 }
-static int evi_uring_free(ev_uring_t uring) {
+static ev_code_t evi_uring_free(ev_uring_t uring) {
 	uring->kys = true;
 
 	struct io_uring_sqe *sqe = io_uring_get_sqe(&uring->ctx);
@@ -195,5 +204,5 @@ static int evi_uring_free(ev_uring_t uring) {
 
 	ev_thread_free_join(uring->worker);
 
-	return 0;
+	return EV_OK;
 }

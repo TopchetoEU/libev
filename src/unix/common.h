@@ -2,6 +2,9 @@
 #pragma once
 
 #include "ev.h"
+#include "ev/errno.h"
+#include <netdb.h>
+#include <errno.h>
 #include <assert.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -66,6 +69,108 @@ static void evi_unix_conv_stat(ev_stat_t *dst, struct stat *src) {
 	dst->inode = src->st_ino;
 	dst->links = src->st_nlink;
 	dst->blksize = src->st_blksize;
+}
+
+static ev_code_t evi_unix_conv_errno(int unixerr) {
+	switch (unixerr) {
+		case EPERM: return EV_EPERM;
+		case ENOENT: return EV_ENOENT;
+		case ESRCH: return EV_ESRCH;
+		case EINTR: return EV_EINTR;
+		case EIO: return EV_EIO;
+		case ENXIO: return EV_ENXIO;
+		case E2BIG: return EV_E2BIG;
+		case ENOEXEC: return EV_ENOEXEC;
+		case EBADF: return EV_EBADF;
+		case ECHILD: return EV_ECHILD;
+		case EAGAIN: return EV_EAGAIN;
+		case ENOMEM: return EV_ENOMEM;
+		case EACCES: return EV_EACCES;
+		case EFAULT: return EV_EFAULT;
+		case EBUSY: return EV_EBUSY;
+		case EEXIST: return EV_EEXIST;
+		case EXDEV: return EV_EXDEV;
+		case ENODEV: return EV_ENODEV;
+		case ENOTDIR: return EV_ENOTDIR;
+		case EISDIR: return EV_EISDIR;
+		case EINVAL: return EV_EINVAL;
+		case ENFILE: return EV_ENFILE;
+		case EMFILE: return EV_EMFILE;
+		case ENOTTY: return EV_ENOTTY;
+		case ETXTBSY: return EV_ETXTBSY;
+		case EFBIG: return EV_EFBIG;
+		case ENOSPC: return EV_ENOSPC;
+		case ESPIPE: return EV_ESPIPE;
+		case EROFS: return EV_EROFS;
+		case EMLINK: return EV_EMLINK;
+		case EPIPE: return EV_EPIPE;
+		case ERANGE: return EV_ERANGE;
+		case EDEADLK: return EV_EDEADLK;
+		case ENAMETOOLONG: return EV_ENAMETOOLONG;
+		case ENOLCK: return EV_ENOLCK;
+		case ENOSYS: return EV_ENOSYS;
+		case ENOTEMPTY: return EV_ENOTEMPTY;
+		case ELOOP: return EV_ELOOP;
+		case EUNATCH: return EV_EUNATCH;
+		case ENODATA: return EV_ENODATA;
+		case ENONET: return EV_ENONET;
+		case ECOMM: return EV_ECOMM;
+		case EPROTO: return EV_EPROTO;
+		case EOVERFLOW: return EV_EOVERFLOW;
+		case ENOTUNIQ: return EV_ENOTUNIQ;
+		case ELIBBAD: return EV_ELIBBAD;
+		case EILSEQ: return EV_EILSEQ;
+		case ENOTSOCK: return EV_ENOTSOCK;
+		case EDESTADDRREQ: return EV_EDESTADDRREQ;
+		case EMSGSIZE: return EV_EMSGSIZE;
+		case EPROTOTYPE: return EV_EPROTOTYPE;
+		case ENOPROTOOPT: return EV_ENOPROTOOPT;
+		case EPROTONOSUPPORT: return EV_EPROTONOSUPPORT;
+		case ESOCKTNOSUPPORT: return EV_ESOCKTNOSUPPORT;
+		case ENOTSUP: return EV_ENOTSUP;
+		case EPFNOSUPPORT: return EV_EPFNOSUPPORT;
+		case EAFNOSUPPORT: return EV_EAFNOSUPPORT;
+		case EADDRINUSE: return EV_EADDRINUSE;
+		case EADDRNOTAVAIL: return EV_EADDRNOTAVAIL;
+		case ENETDOWN: return EV_ENETDOWN;
+		case ENETUNREACH: return EV_ENETUNREACH;
+		case ECONNABORTED: return EV_ECONNABORTED;
+		case ECONNRESET: return EV_ECONNRESET;
+		case ENOBUFS: return EV_ENOBUFS;
+		case EISCONN: return EV_EISCONN;
+		case ENOTCONN: return EV_ENOTCONN;
+		case ESHUTDOWN: return EV_ESHUTDOWN;
+		case ETIMEDOUT: return EV_ETIMEDOUT;
+		case ECONNREFUSED: return EV_ECONNREFUSED;
+		case EHOSTDOWN: return EV_EHOSTDOWN;
+		case EHOSTUNREACH: return EV_EHOSTUNREACH;
+		case EALREADY: return EV_EALREADY;
+		case EREMOTEIO: return EV_EREMOTEIO;
+		case ENOMEDIUM: return EV_ENOMEDIUM;
+		case ECANCELED: return EV_ECANCELED;
+		case -1: return EV_EUNKNOWN;
+		default: return EV_EUNKNOWN;
+	}
+}
+static ev_code_t evi_unix_conv_aierr(int aierr) {
+	switch (aierr) {
+		case EAI_BADFLAGS: return EV_EAI_BADFLAGS;
+		case EAI_NONAME: return EV_EAI_NONAME;
+		case EAI_AGAIN: return EV_EAI_AGAIN;
+		case EAI_FAIL: return EV_EAI_FAIL;
+		case EAI_FAMILY: return EV_EAI_FAMILY;
+		case EAI_SOCKTYPE: return EV_EAI_SOCKTYPE;
+		case EAI_SERVICE: return EV_EAI_SERVICE;
+		case EAI_MEMORY: return EV_EAI_MEMORY;
+		case EAI_OVERFLOW: return EV_EAI_OVERFLOW;
+		#ifdef EV_USE_LINUX
+			case EAI_NODATA: return EV_EAI_NODATA;
+			case EAI_ADDRFAMILY: return EV_EAI_ADDRFAMILY;
+			case EAI_CANCELED: return EV_EAI_CANCELED;
+		#endif
+
+		default: return EV_EUNKNOWN;
+	}
 }
 
 static int evi_unix_conv_addr(ev_addr_t addr, uint16_t port, struct sockaddr_storage *pres) {
