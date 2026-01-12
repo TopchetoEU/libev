@@ -123,6 +123,9 @@ bool ev_parse_ip(const char *str, ev_addr_t *pres);
 // Returns true if both addresses are equal
 bool ev_cmpaddr(ev_addr_t a, ev_addr_t b);
 
+// Converts the error code to a human-readable string
+const char *ev_strerr(ev_code_t code);
+
 // Creates an ev instance. Combines a queue and a thread pool
 ev_t ev_init();
 // Puts the loop in a special "closed" state. This means that all new (well-behaving)
@@ -139,6 +142,8 @@ bool ev_busy(ev_t ev);
 // Well-behaving tasks will check this first, and will ev_push an error code, if this returns true
 bool ev_closed(ev_t ev);
 
+// Signals to ev that a task has begun. Used to track `ev_busy`
+void ev_begin(ev_t ev);
 // Pushes a result to the message queue
 // NOTE: using the same udata twice is UB
 ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err);

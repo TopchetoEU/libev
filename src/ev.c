@@ -48,109 +48,7 @@ struct ev {
 	#endif
 };
 
-static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
-	ev_msg_t msg = malloc(sizeof *msg);
-	if (!msg) return EV_ENOMEM;
-
-	msg->next = ev->next_msg;
-	msg->udata = udata;
-	msg->err = err;
-	ev->next_msg = msg;
-
-	#ifdef EV_USE_PTHREAD
-		ev_cond_broadcast(ev->has_msg_cond);
-	#endif
-
-	return EV_OK;
-}
-
-#ifdef EV_USE_PTHREAD
-	typedef struct ev_pool_worker {
-		struct ev_pool_worker *next;
-		ev_t ev;
-		ev_cond_t cond;
-
-		ev_thread_t thread;
-
-		ev_worker_t worker;
-		void *udata;
-		void *args;
-
-		bool kys;
-	} *ev_pool_worker_t;
-	typedef struct {
-		ev_pool_worker_t worker;
-		ev_t sync;
-	} *ev_sync_args_t;
-
-	static void *evi_pool_worker_entry(void *pargs) {
-		ev_pool_worker_t worker = (ev_pool_worker_t)pargs;
-		ev_t ev = worker->ev;
-
-		ev_mutex_lock(ev->lock);
-
-		while (true) {
-
-			while (true) {
-				if (worker->kys) goto end;
-				if (worker->worker) break;
-
-				ev_cond_wait(worker->cond, ev->lock);
-			}
-
-			void *udata = worker->udata;
-			ev_worker_t cb = worker->worker;
-			void *args = worker->args;
-			worker->worker = NULL;
-			worker->args = NULL;
-			worker->udata = NULL;
-
-			ev_mutex_unlock(ev->lock);
-			int code = cb(args);
-			ev_push(ev, udata, code);
-			ev_mutex_lock(ev->lock);
-		}
-
-	end:
-		ev_mutex_unlock(ev->lock);
-		ev_cond_free(worker->cond);
-		free(worker);
-		return NULL;
-	}
-#endif
-
-static int evi_finalize(ev_t ev) {
-	#ifdef EV_USE_PTHREAD
-		while (ev->next_worker) {
-			ev_pool_worker_t curr = ev->next_worker;
-			ev->next_worker = curr->next;
-
-			curr->kys = true;
-			ev_cond_broadcast(curr->cond);
-
-			ev_mutex_unlock(ev->lock);
-			ev_thread_free_join(curr->thread);
-			ev_mutex_lock(ev->lock);
-		}
-
-		ev->next_worker = NULL;
-
-		ev_cond_broadcast(ev->has_msg_cond);
-
-		ev_mutex_unlock(ev->lock);
-		ev_mutex_free(ev->lock);
-	#endif
-
-	if (evi_stdio_free(ev->in, ev->out, ev->err) < 0) return -1;
-
-	#ifdef EV_USE_URING
-		if (evi_uring_free(ev->uring) < 0) return -1;
-	#elif defined EV_USE_WIN32
-		if (evi_win_free() < 0) return -1;
-	#endif
-
-	return 0;
-}
+// ADDRESS UTILITY FUNCS
 
 static bool ev_parse_ipv4(const char *str, ev_addr_t *pres) {
 	ev_addr_t res;
@@ -256,6 +154,8 @@ bool ev_cmpaddr(ev_addr_t a, ev_addr_t b) {
 	}
 }
 
+// TIMESTAMP UTILITY FUNCS
+
 ev_time_t ev_timeadd(ev_time_t a, ev_time_t b) {
 	ev_time_t res = { .sec = a.sec + b.sec, .nsec = a.nsec + b.nsec };
 	if (res.nsec > 1000000000) {
@@ -280,6 +180,206 @@ ev_time_t ev_timesub(ev_time_t a, ev_time_t b) {
 }
 int64_t ev_timems(ev_time_t time) {
 	return time.sec * 1000 + (time.nsec + 999999) / 1000000;
+}
+
+// EV CORE FUNCS
+
+#ifdef EV_USE_PTHREAD
+	typedef struct ev_pool_worker {
+		struct ev_pool_worker *next;
+		ev_t ev;
+		ev_cond_t cond;
+
+		ev_thread_t thread;
+
+		ev_worker_t worker;
+		void *udata;
+		void *args;
+
+		bool kys;
+	} *ev_pool_worker_t;
+	typedef struct {
+		ev_pool_worker_t worker;
+		ev_t sync;
+	} *ev_sync_args_t;
+
+	static void *evi_pool_worker_entry(void *pargs) {
+		ev_pool_worker_t worker = (ev_pool_worker_t)pargs;
+		ev_t ev = worker->ev;
+
+		ev_mutex_lock(ev->lock);
+
+		while (true) {
+
+			while (true) {
+				if (worker->kys) goto end;
+				if (worker->worker) break;
+
+				ev_cond_wait(worker->cond, ev->lock);
+			}
+
+			void *udata = worker->udata;
+			ev_worker_t cb = worker->worker;
+			void *args = worker->args;
+			worker->worker = NULL;
+			worker->args = NULL;
+			worker->udata = NULL;
+
+			ev_mutex_unlock(ev->lock);
+			int code = cb(args);
+			ev_push(ev, udata, code);
+			ev_mutex_lock(ev->lock);
+		}
+
+	end:
+		ev_mutex_unlock(ev->lock);
+		ev_cond_free(worker->cond);
+		free(worker);
+		return NULL;
+	}
+#endif
+
+static int evi_finalize(ev_t ev) {
+	#ifdef EV_USE_PTHREAD
+		while (ev->next_worker) {
+			ev_pool_worker_t curr = ev->next_worker;
+			ev->next_worker = curr->next;
+
+			curr->kys = true;
+			ev_cond_broadcast(curr->cond);
+
+			ev_mutex_unlock(ev->lock);
+			ev_thread_free_join(curr->thread);
+			ev_mutex_lock(ev->lock);
+		}
+
+		ev->next_worker = NULL;
+
+		ev_cond_broadcast(ev->has_msg_cond);
+
+		ev_mutex_unlock(ev->lock);
+		ev_mutex_free(ev->lock);
+	#endif
+
+	if (evi_stdio_free(ev->in, ev->out, ev->err) < 0) return -1;
+
+	#ifdef EV_USE_URING
+		if (evi_uring_free(ev->uring) < 0) return -1;
+	#elif defined EV_USE_WIN32
+		if (evi_win_free() < 0) return -1;
+	#endif
+
+	return 0;
+}
+
+static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
+	ev_msg_t msg = malloc(sizeof *msg);
+	if (!msg) return EV_ENOMEM;
+
+	msg->next = ev->next_msg;
+	msg->udata = udata;
+	msg->err = err;
+	ev->next_msg = msg;
+
+	#ifdef EV_USE_PTHREAD
+		ev_cond_broadcast(ev->has_msg_cond);
+	#endif
+
+	return EV_OK;
+}
+
+const char *ev_strerr(ev_code_t code) {
+	switch (code) {
+		case EV_EPERM: return "operation not permitted";
+		case EV_ENOENT: return "no such file or directory";
+		case EV_ESRCH: return "no such process";
+		case EV_EINTR: return "interrupted system call";
+		case EV_EIO: return "i/o error";
+		case EV_ENXIO: return "no such device or address";
+		case EV_E2BIG: return "argument list too long";
+		case EV_ENOEXEC: return "exec format error";
+		case EV_EBADF: return "bad file descriptor";
+		case EV_ECHILD: return "no child processes";
+		case EV_EAGAIN: return "resource temporarily unavailable";
+		case EV_ENOMEM: return "not enough memory";
+		case EV_EACCES: return "permission denied";
+		case EV_EFAULT: return "bad address in system call argument";
+		case EV_EBUSY: return "resource busy or locked";
+		case EV_EEXIST: return "file already exists";
+		case EV_EXDEV: return "cross-device link not permitted";
+		case EV_ENODEV: return "no such device";
+		case EV_ENOTDIR: return "not a directory";
+		case EV_EISDIR: return "illegal operation on a directory";
+		case EV_EINVAL: return "invalid argument";
+		case EV_ENFILE: return "file table overflow";
+		case EV_EMFILE: return "too many open files";
+		case EV_ENOTTY: return "inappropriate ioctl for device";
+		case EV_ETXTBSY: return "text file is busy";
+		case EV_EFBIG: return "file too large";
+		case EV_ENOSPC: return "no space left on device";
+		case EV_ESPIPE: return "invalid seek";
+		case EV_EROFS: return "read-only file system";
+		case EV_EMLINK: return "too many links";
+		case EV_EPIPE: return "broken pipe";
+		case EV_ERANGE: return "result too large";
+		case EV_EDEADLK: return "resource deadlock avoided";
+		case EV_ENAMETOOLONG: return "name too long";
+		case EV_ENOLCK: return "no locks available";
+		case EV_ENOSYS: return "function not implemented";
+		case EV_ENOTEMPTY: return "directory not empty";
+		case EV_ELOOP: return "too many symbolic links encountered";
+		case EV_EUNATCH: return "protocol driver not attached";
+		case EV_ENODATA: return "no data available";
+		case EV_ENONET: return "machine is not on the network";
+		case EV_ECOMM: return "communication error on send";
+		case EV_EPROTO: return "protocol error";
+		case EV_EOVERFLOW: return "value too large for defined data type";
+		case EV_ENOTUNIQ: return "Name not unique on network";
+		case EV_ELIBBAD: return "accessing a corrupted shared library";
+		case EV_EILSEQ: return "illegal byte sequence";
+		case EV_ENOTSOCK: return "socket operation on non-socket";
+		case EV_EDESTADDRREQ: return "destination address required";
+		case EV_EMSGSIZE: return "message too long";
+		case EV_EPROTOTYPE: return "protocol wrong type for socket";
+		case EV_ENOPROTOOPT: return "protocol not available";
+		case EV_EPROTONOSUPPORT: return "protocol not supported";
+		case EV_ESOCKTNOSUPPORT: return "socket type not supported";
+		case EV_ENOTSUP: return "operation not supported on socket";
+		case EV_EPFNOSUPPORT: return "operation not supported on socket";
+		case EV_EAFNOSUPPORT: return "address family not supported";
+		case EV_EADDRINUSE: return "address already in use";
+		case EV_EADDRNOTAVAIL: return "address not available";
+		case EV_ENETDOWN: return "network is down";
+		case EV_ENETUNREACH: return "network is unreachable";
+		case EV_ECONNABORTED: return "software caused connection abort";
+		case EV_ECONNRESET: return "connection reset by peer";
+		case EV_ENOBUFS: return "no buffer space available";
+		case EV_EISCONN: return "socket is already connected";
+		case EV_ENOTCONN: return "socket is not connected";
+		case EV_ESHUTDOWN: return "cannot send after transport endpoint shutdown";
+		case EV_ETIMEDOUT: return "connection timed out";
+		case EV_ECONNREFUSED: return "connection refused";
+		case EV_EHOSTDOWN: return "host is down";
+		case EV_EHOSTUNREACH: return "host is unreachable";
+		case EV_EALREADY: return "connection already in progress";
+		case EV_EREMOTEIO: return "remote I/O error";
+		case EV_ENOMEDIUM: return "no medium found";
+		case EV_ECANCELED: return "operation canceled";
+		case EV_EAI_BADFLAGS: return "bad ai_flags value";
+		case EV_EAI_NONAME: return "unknown node or service";
+		case EV_EAI_AGAIN: return "temporary failure";
+		case EV_EAI_FAIL: return "permanent failure";
+		case EV_EAI_NODATA: return "no address";
+		case EV_EAI_FAMILY: return "ai_family not supported";
+		case EV_EAI_SOCKTYPE: return "socket type not supported";
+		case EV_EAI_SERVICE: return "service not available for socket type";
+		case EV_EAI_ADDRFAMILY: return "address family not supported";
+		case EV_EAI_MEMORY: return "out of memory";
+		case EV_EAI_OVERFLOW: return "argument buffer overflow";
+		case EV_EAI_CANCELED: return "request canceled";
+		case EV_ECHARSET: return "invalid Unicode character";
+		default: return "unknown OS-specific error";
+	}
 }
 
 ev_t ev_init() {
@@ -336,6 +436,11 @@ bool ev_closed(ev_t ev) {
 	return res;
 }
 
+void ev_begin(ev_t ev) {
+	ev_mutex_lock(ev->lock);
+	ev->active_n++;
+	ev_mutex_unlock(ev->lock);
+}
 ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 	ev_mutex_lock(ev->lock);
 	ev_code_t code = evi_push(ev, udata, err);
@@ -348,13 +453,13 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 
 	#ifdef EV_USE_PTHREAD
 		if (!sync) {
-
 			for (ev_pool_worker_t it = ev->next_worker; it; it = it->next) {
 				if (!it->worker) {
 					it->worker = worker;
 					it->args = pargs;
 					it->udata = udata;
 					ev_cond_signal(it->cond);
+					ev->active_n++;
 					ev_mutex_unlock(ev->lock);
 					return EV_OK;
 				}
@@ -382,11 +487,13 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 				goto fallback;
 			}
 
+			ev->active_n++;
 			ev_mutex_unlock(ev->lock);
-			return 0;
+			return EV_OK;
 		}
 		else fallback: {
 	#endif
+			ev->active_n++;
 			int code = worker(pargs);
 			int errcode = evi_push(ev, udata, code);
 			ev_mutex_unlock(ev->lock);
@@ -395,7 +502,6 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 		}
 	#endif
 }
-
 ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **pudata, int *perr) {
 	ev_mutex_lock(ev->lock);
 
@@ -407,7 +513,7 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **puda
 			}
 
 			if (ptimeout) {
-				if (ev_cond_timewait(ev->has_msg_cond, ev->lock, *ptimeout) == ETIMEDOUT) {
+				if (ev_cond_timewait(ev->has_msg_cond, ev->lock, *ptimeout) == EV_ETIMEDOUT) {
 					ev_mutex_unlock(ev->lock);
 					return EV_POLL_TIMEOUT;
 				}
@@ -423,13 +529,12 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **puda
 
 	if (ev->closing) wait = false;
 
-	ev->active_n--;
-
 	*pudata = msg->udata;
 	*perr = msg->err;
 
 	free(msg);
 
+	ev->active_n--;
 	ev_mutex_unlock(ev->lock);
 
 	return EV_POLL_OK;
@@ -448,7 +553,6 @@ typedef struct { ev_dir_t dir; char **pname; } evi_readdir_args_t;
 typedef struct { ev_fd_t *pres; ev_proto_t proto; ev_addr_t addr; uint16_t port; } evi_sock_args_t;
 typedef struct { ev_fd_t *pres; ev_addr_t *paddr; uint16_t *pport; ev_fd_t server; } evi_accept_args_t;
 typedef struct { ev_addrinfo_t *pres; const char *name; ev_addrinfo_flags_t flags; } evi_getaddrinfo_args_t;
-
 
 static int evi_open_worker(void *pargs) {
 	evi_open_args_t args = *(evi_open_args_t*)pargs;
@@ -510,10 +614,11 @@ static int evi_getaddrinfo_worker(void *pargs) {
 
 ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	#ifdef EV_USE_URING
+		ev_begin(ev);
 		return evi_uring_open(ev->uring, udata, pres, path, flags, mode);
 	#else
 		evi_open_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return -ENOMEM;
+		if (!pargs) return EV_ENOMEM;
 
 		pargs->pres = pres;
 		pargs->path = path;
@@ -524,10 +629,11 @@ ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open
 }
 ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
+		ev_begin(ev);
 		return evi_uring_read(ev->uring, udata, fd, (char*)buff, n, offset);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return -ENOMEM;
+		if (!pargs) return EV_ENOMEM;
 
 		pargs->fd = fd;
 		pargs->buff = (char*)buff;
@@ -538,10 +644,11 @@ ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n,
 }
 ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
+		ev_begin(ev);
 		return evi_uring_write(ev->uring, udata, fd, buff, n, offset);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return -ENOMEM;
+		if (!pargs) return EV_ENOMEM;
 
 		pargs->fd = fd;
 		pargs->buff = buff;
@@ -552,10 +659,11 @@ ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size
 }
 ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {
 	#ifdef EV_USE_URING
+		ev_begin(ev);
 		return evi_uring_stat(ev->uring, udata, fd, buff);
 	#else
 		evi_stat_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return -ENOMEM;
+		if (!pargs) return EV_ENOMEM;
 
 		pargs->fd = fd;
 		pargs->buff = buff;
@@ -565,7 +673,7 @@ ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {
 
 ev_code_t ev_mkdir(ev_t ev, void *udata, const char *path, int mode) {
 	evi_mkdir_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return -ENOMEM;
+	if (!pargs) return EV_ENOMEM;
 
 	pargs->path = path;
 	pargs->mode = mode;
@@ -573,7 +681,7 @@ ev_code_t ev_mkdir(ev_t ev, void *udata, const char *path, int mode) {
 }
 ev_code_t ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path) {
 	evi_opendir_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return -ENOMEM;
+	if (!pargs) return EV_ENOMEM;
 
 	pargs->pres = pres;
 	pargs->path = path;
@@ -581,7 +689,7 @@ ev_code_t ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path) {
 }
 ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
 	evi_readdir_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return -ENOMEM;
+	if (!pargs) return EV_ENOMEM;
 
 	pargs->dir = dir;
 	pargs->pname = pname;
@@ -590,7 +698,7 @@ ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
 
 ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return -ENOMEM;
+	if (!pargs) return EV_ENOMEM;
 
 	pargs->pres = pres;
 	pargs->proto = proto;
@@ -600,7 +708,7 @@ ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_a
 }
 ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return -ENOMEM;
+	if (!pargs) return EV_ENOMEM;
 
 	pargs->pres = pres;
 	pargs->proto = proto;
@@ -610,10 +718,11 @@ ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr
 }
 ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
 	#ifdef EV_USE_URING
+		ev_begin(ev);
 		return evi_uring_accept(ev->uring, udata, pres, paddr, pport, server);
 	#else
 		evi_accept_args_t *pargs = malloc(sizeof *pargs);
-		if (!pargs) return -ENOMEM;
+		if (!pargs) return EV_ENOMEM;
 
 		pargs->pres = pres;
 		pargs->paddr = paddr;
@@ -624,7 +733,7 @@ ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint1
 }
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	evi_getaddrinfo_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return -ENOMEM;
+	if (!pargs) return EV_ENOMEM;
 
 	pargs->pres = pres;
 	pargs->name = name;
