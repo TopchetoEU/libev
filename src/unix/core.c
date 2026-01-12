@@ -1,3 +1,4 @@
+#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
@@ -28,25 +29,55 @@ static int evi_unix_mksock(ev_proto_t proto, ev_addr_type_t type) {
 }
 
 static ev_code_t evi_sync_open(ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
-	int fd = open(path, evi_unix_conv_open_flags(flags), mode);
-	if (fd < 0) return evi_unix_conv_errno(errno);
-	*pres = (void*)(size_t)fd;
+	int fd = -1;
+
+	#ifdef EV_USE_LINUX
+		fd = open(path, evi_unix_conv_open_flags(flags), mode);
+		if (fd < 0) return evi_unix_conv_errno(errno);
+	#else
+		if (flags != EV_OPEN_STAT) {
+			int unix_flags = evi_unix_conv_open_flags(flags);
+			fd = open(path, unix_flags, mode);
+			if (fd < 0) return evi_unix_conv_errno(errno);
+		}
+
+		if (fd < 0) {
+			*pres = evi_unix_mkat(path);
+		}
+		else
+	#endif
+	{
+		*pres = evi_unix_mkfd(fd);
+	}
+
+	if (!*pres) return EV_ENOMEM;
 	return EV_OK;
 }
 static ev_code_t evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
-	struct stat stat;
-	if (fstat((int)(size_t)fd, &stat) < 0) return evi_unix_conv_errno(errno);
-	evi_unix_conv_stat(buff, &stat);
+	struct stat res;
+
+	if (evi_unix_isfd(fd)) {
+		if (fstat(evi_unix_fd(fd), &res) < 0) return evi_unix_conv_errno(errno);
+	}
+	else {
+		if (stat(evi_unix_at(fd), &res) < 0) return evi_unix_conv_errno(errno);
+	}
+
+	evi_unix_conv_stat(buff, &res);
 	return EV_OK;
 }
 static ev_code_t evi_sync_read(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
-	ssize_t res = pread((int)(size_t)fd, buff, *n, offset);
+	if (!evi_unix_isfd(fd)) return EV_EBADF;
+
+	ssize_t res = pread(evi_unix_fd(fd), buff, *n, offset);
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
 }
 static ev_code_t evi_sync_write(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
-	ssize_t res = pwrite((int)(size_t)fd, buff, *n, offset);
+	if (!evi_unix_isfd(fd)) return EV_EBADF;
+
+	ssize_t res = pwrite(evi_unix_fd(fd), buff, *n, offset);
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
@@ -54,9 +85,13 @@ static ev_code_t evi_sync_write(ev_fd_t fd, char *buff, size_t *n, size_t offset
 void ev_close(ev_t loop, ev_fd_t fd) {
 	(void)loop;
 
-	while (close((int)(size_t)fd) < 0) {
-		if (errno != EINTR) return;
+	if (evi_unix_isfd(fd)) {
+		while (close((int)(size_t)fd) < 0) {
+			if (errno != EINTR) return;
+		}
 	}
+
+	evi_unix_freefd(fd);
 }
 
 static ev_code_t evi_sync_mkdir(const char *path, int mode) {
@@ -107,7 +142,7 @@ static ev_code_t evi_sync_connect(ev_fd_t *pres, ev_proto_t proto, ev_addr_t add
 
 	if (connect(sock, (void*)&arg_addr, len) < 0) return evi_unix_conv_errno(errno);
 
-	*pres = (void*)(size_t)sock;
+	*pres = evi_unix_mkfd(sock);
 	return EV_OK;
 }
 static ev_code_t evi_sync_bind(ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
@@ -119,7 +154,7 @@ static ev_code_t evi_sync_bind(ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, 
 
 	if (bind(sock, (void*)&arg_addr, len) < 0) return evi_unix_conv_errno(errno);
 
-	*pres = (void*)(size_t)sock;
+	*pres = evi_unix_mkfd(sock);
 	return EV_OK;
 }
 static ev_code_t evi_sync_accept(ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
@@ -130,7 +165,7 @@ static ev_code_t evi_sync_accept(ev_fd_t *pres, ev_addr_t *paddr, uint16_t *ppor
 	if (!client) return evi_unix_conv_errno(errno);
 
 	evi_unix_conv_sockaddr(&addr, paddr, pport);
-	*pres = (void*)(size_t)client;
+	*pres = evi_unix_mkfd(client);
 	return EV_OK;
 }
 static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
@@ -155,7 +190,9 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 
 	switch (code) {
 		case 0: break;
-		case EAI_NODATA: break;
+		#ifdef EV_USE_LINUX
+			case EAI_NODATA: break;
+		#endif
 		case EAI_NONAME: break;
 		default: return evi_unix_conv_aierr(code);
 	}

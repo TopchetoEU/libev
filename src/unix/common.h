@@ -3,6 +3,7 @@
 
 #include "ev.h"
 #include "ev/errno.h"
+#include <stdlib.h>
 #include <netdb.h>
 #include <errno.h>
 #include <assert.h>
@@ -12,6 +13,95 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+
+#ifdef EV_USE_LINUX
+	static ev_fd_t evi_unix_mkfd(int fd) {
+		return (void*)(size_t)fd;
+	}
+	static void evi_unix_freefd(ev_fd_t fd) {
+		(void)fd;
+	}
+
+	static int evi_unix_isfd(ev_fd_t fd) {
+		(void)fd;
+		return true;
+	}
+	static int evi_unix_fd(ev_fd_t fd) {
+		return (int)(size_t)fd;
+	}
+	static char *evi_unix_at(ev_fd_t fd) {
+		(void)fd;
+		return NULL;
+	}
+#elif defined EV_USE_PTRTAG
+	// NOTE: without O_PATH, a race condition could be triggered, where you open a file
+	// with only creation flags and then try to stat it, but it gets deleted in the meantime
+	// Unfortunately, there isn't a roundabout way around this
+
+	static ev_fd_t evi_unix_mkfd(int fd) {
+		return (ev_fd_t)(size_t)(fd << 1 | 1);
+	}
+	static ev_fd_t evi_unix_mkat(const char *path) {
+		size_t len = strlen(path);
+		char *at = malloc(len + 1);
+		memcpy(at, path, len + 1);
+		return (ev_fd_t)at;
+	}
+	static void evi_unix_freefd(ev_fd_t fd) {
+		if (((size_t)fd & 1) == 0) free(fd);
+	}
+
+	static int evi_unix_isfd(ev_fd_t fd) {
+		return (size_t)fd & 1;
+	}
+	static int evi_unix_fd(ev_fd_t fd) {
+		return (int)((size_t)fd >> 1);
+	}
+	static char *evi_unix_at(ev_fd_t fd) {
+		return (char*)fd;
+	}
+#else
+	struct ev_fd {
+		enum {
+			EVI_UNIX_FD,
+			EVI_UNIX_AT,
+		} kind;
+		union {
+			int fd;
+			char at[];
+		};
+	};
+
+	static ev_fd_t evi_unix_mkfd(int fd) {
+		ev_fd_t res = malloc(sizeof *res);
+		if (!res) return NULL;
+		res->kind = EVI_UNIX_FD;
+		res->fd = fd;
+		return res;
+	}
+	static ev_fd_t evi_unix_mkat(const char *path) {
+		size_t len = strlen(path);
+		ev_fd_t res = malloc(sizeof *res + len + 1);
+		if (!res) return NULL;
+
+		res->kind = EVI_UNIX_AT;
+		memcpy(res->at, path, len + 1);
+		return res;
+	}
+	static void evi_unix_freefd(ev_fd_t fd) {
+		free(fd);
+	}
+
+	static int evi_unix_isfd(ev_fd_t fd) {
+		return fd->kind == EVI_UNIX_FD;
+	}
+	static int evi_unix_fd(ev_fd_t fd) {
+		return fd->fd;
+	}
+	static char *evi_unix_at(ev_fd_t fd) {
+		return fd->at;
+	}
+#endif
 
 static int evi_unix_conv_open_flags(ev_open_flags_t flags) {
 	int res = 0;
@@ -32,9 +122,11 @@ static int evi_unix_conv_open_flags(ev_open_flags_t flags) {
 	else if (flags & EV_OPEN_READ) {
 		res |= O_RDONLY;
 	}
+#ifdef EV_USE_LINUX
 	else {
 		res |= O_PATH;
 	}
+#endif
 
 	if (flags & EV_OPEN_CREATE) res |= O_CREAT;
 	if (flags & EV_OPEN_TRUNC) res |= O_TRUNC;

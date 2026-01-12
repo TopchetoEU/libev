@@ -96,7 +96,7 @@ static ev_code_t evi_uring_read(ev_uring_t uring, void *ticket, ev_fd_t fd, char
 	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
-	io_uring_prep_read(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, buff, *n, offset);
+	io_uring_prep_read(evi_uring_get_sqe(uring, udata), evi_unix_fd(fd), buff, *n, offset);
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
@@ -105,7 +105,7 @@ static ev_code_t evi_uring_write(ev_uring_t uring, void *ticket, ev_fd_t fd, cha
 	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
-	io_uring_prep_write(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, buff, *n, offset);
+	io_uring_prep_write(evi_uring_get_sqe(uring, udata), evi_unix_fd(fd), buff, *n, offset);
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
@@ -121,7 +121,7 @@ static ev_code_t evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_s
 	mask |= STATX_SIZE | STATX_BLOCKS;
 	mask |= STATX_INO | STATX_NLINK | STATX_MNT_ID | STATX_MNT_ID_UNIQUE;
 
-	io_uring_prep_statx(evi_uring_get_sqe(uring, udata), (int)(size_t)fd, "", AT_EMPTY_PATH, mask, &udata->stat.buff);
+	io_uring_prep_statx(evi_uring_get_sqe(uring, udata), evi_unix_fd(fd), "", AT_EMPTY_PATH, mask, &udata->stat.buff);
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
@@ -133,7 +133,7 @@ static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres,
 	udata->accept.paddr = paddr;
 	udata->accept.pport = pport;
 
-	io_uring_prep_accept(evi_uring_get_sqe(uring, udata), (int)(size_t)server, (void*)&udata->accept.addr, &udata->accept.len, 0);
+	io_uring_prep_accept(evi_uring_get_sqe(uring, udata), evi_unix_fd(server), (void*)&udata->accept.addr, &udata->accept.len, 0);
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
@@ -160,14 +160,14 @@ static void *evi_uring_worker(void *arg) {
 					evi_unix_conv_statx(udata->stat.pres, &udata->stat.buff);
 					break;
 				case EVI_URING_OPEN:
-					*udata->phnd = (ev_fd_t)(size_t)cqe->res;
+					*udata->phnd = evi_unix_mkfd(cqe->res);
 					break;
 				case EVI_URING_RW:
 					*udata->pn = cqe->res;
 					break;
 				case EVI_URING_ACCEPT:
 					evi_unix_conv_sockaddr(&udata->accept.addr, udata->accept.paddr, udata->accept.pport);
-					*udata->accept.pres = (ev_fd_t)(size_t)cqe->res;
+					*udata->accept.pres = evi_unix_mkfd(cqe->res);
 					break;
 				default: break;
 			}
