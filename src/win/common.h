@@ -1,13 +1,11 @@
 #pragma once
-#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 
 #include "ev.h"
+#include "ev/errno.h"
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <time.h>
-#include <errno.h>
 
 #include <winsock2.h>
 #include <ws2ipdef.h>
@@ -39,7 +37,7 @@ static ev_time_t evi_win_conv_filetime(FILETIME filetime) {
 		.nsec = (long)(total_ticks % 100000000) * 100,
 	};
 }
-static ev_err_t evi_unix_conv_errno(int winerr) {
+static ev_code_t evi_win_conv_errno(int winerr) {
 	switch (winerr) {
 		case ERROR_ACCESS_DENIED: return EV_EPERM;
 		case ERROR_ACTIVE_CONNECTIONS: return EV_EAGAIN;
