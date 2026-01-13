@@ -150,7 +150,7 @@ static void *evi_uring_worker(void *arg) {
 
 		ev_uring_udata_t udata = (ev_uring_udata_t)(size_t)cqe->user_data;
 
-		if (udata) break;
+		if (!udata) break;
 		if (uring->kys) {
 			free(udata);
 			break;
