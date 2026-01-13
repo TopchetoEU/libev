@@ -1,6 +1,7 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
+#include "ev/conf.h"
 #include "ev.h"
 #include "ev/errno.h"
 #include <stdlib.h>

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ev/conf.h"
 #include "ev/errno.h"
 
 #include <stdint.h>

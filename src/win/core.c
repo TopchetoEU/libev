@@ -1,9 +1,10 @@
 #pragma once
-#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 
-#include "common.h"
+#include "ev/conf.h"
+#include "ev/errno.h"
 #include "ev.h"
+#include "common.h"
 
 #include <stdio.h>
 #include <stdint.h>

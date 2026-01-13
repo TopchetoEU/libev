@@ -1,7 +1,7 @@
-#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
+#include "ev/conf.h"
 #include "ev.h"
 #include "../multithread.h"
 #include "./common.h"
