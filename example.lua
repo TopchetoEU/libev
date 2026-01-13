@@ -2,7 +2,7 @@ local ffi = require "ffi";
 
 local libev = ffi.load "./bin/libev.so";
 local libc = ffi.C;
-_G.libev = libev;
+_G.libev = libevm;
 
 
 ffi.cdef [[

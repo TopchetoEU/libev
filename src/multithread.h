@@ -14,6 +14,7 @@
 
 	#define ev_thread_new(th, entry, args) (CreateThread(NULL, 0, (void*)(entry), (args), 0, NULL) ? 0 : -1)
 	#define ev_thread_free_join(th) (WaitForSingleObject(th, INFINITE) ? 0 : -1)
+	#define ev_thread_cancel(th) (CancelSynchronousIo(th) ? 0 : -1)
 
 	#define ev_mutex_new(mut) (void)InitializeCriticalSection(mut)
 	#define ev_mutex_free(mut) (void)DeleteCriticalSection(mut)
@@ -45,6 +46,7 @@
 	typedef pthread_cond_t ev_cond_t[1];
 
 	#define ev_thread_new(th, entry, args) pthread_create(th, (const pthread_attr_t*)NULL, entry, args)
+	#define ev_thread_cancel(th) (void)pthread_cancel(*(th))
 
 	static inline void *ev_thread_free_join(ev_thread_t th) {
 		void *ret;

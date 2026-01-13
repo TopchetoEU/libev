@@ -147,9 +147,14 @@ static void *evi_uring_worker(void *arg) {
 
 		int code = io_uring_wait_cqe(&uring->ctx, &cqe);
 		if (code == -EINTR) continue;
-		if (!cqe->user_data) break;
 
 		ev_uring_udata_t udata = (ev_uring_udata_t)(size_t)cqe->user_data;
+
+		if (udata) break;
+		if (uring->kys) {
+			free(udata);
+			break;
+		}
 
 		if (cqe->res < 0) {
 			ev_push(uring->ev, udata->ticket, evi_unix_conv_errno(-cqe->res));
@@ -174,13 +179,13 @@ static void *evi_uring_worker(void *arg) {
 			ev_push(uring->ev, udata->ticket, 0);
 		}
 
+		free(udata);
 		io_uring_cqe_seen(&uring->ctx, cqe);
 	}
 
 	io_uring_queue_exit(&uring->ctx);
 	return NULL;
 }
-
 
 static ev_code_t evi_uring_init(ev_t ev, ev_uring_t uring) {
 	uring->ev = ev;

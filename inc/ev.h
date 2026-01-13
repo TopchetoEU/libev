@@ -136,11 +136,8 @@ ev_t ev_init();
 // Calling this function multiple times is safe
 void ev_free(ev_t ev);
 
-// Checks if ev still has pending tickets
+// Checks if ev still has pending operations
 bool ev_busy(ev_t ev);
-// Returns true if the loop is closed
-// Well-behaving tasks will check this first, and will ev_push an error code, if this returns true
-bool ev_closed(ev_t ev);
 
 // Signals to ev that a task has begun. Used to track `ev_busy`
 void ev_begin(ev_t ev);
