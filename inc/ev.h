@@ -128,12 +128,8 @@ const char *ev_strerr(ev_code_t code);
 
 // Creates an ev instance. Combines a queue and a thread pool
 ev_t ev_init();
-// Puts the loop in a special "closed" state. This means that all new (well-behaving)
-// tasks will immediately pushes the ticket with an error code.
-// In this mode, when all the remaining tickets get polled, all resources, associated with this loop will be released.
-// NOTE: this behavior means that at least one ev_poll call is required to actually free the loop after ev_free was called
-// After that, using this event loop is UB.
-// Calling this function multiple times is safe
+// Cancels all filesystem operations, waits for all worker threads to finish and frees all resources of the loop
+// Safe(ish) to call in GCs
 void ev_free(ev_t ev);
 
 // Checks if ev still has pending operations

@@ -12,6 +12,7 @@ ffi.cdef [[
 	void free(void *ptr);
 
 	#line 13
+
 typedef struct ev *ev_t;
 
 // Used to deploy a sync workload in an ev-managed thread
@@ -141,11 +142,8 @@ ev_t ev_init();
 // Calling this function multiple times is safe
 void ev_free(ev_t ev);
 
-// Checks if ev still has pending tickets
+// Checks if ev still has pending operations
 bool ev_busy(ev_t ev);
-// Returns true if the loop is closed
-// Well-behaving tasks will check this first, and will ev_push an error code, if this returns true
-bool ev_closed(ev_t ev);
 
 // Signals to ev that a task has begun. Used to track `ev_busy`
 void ev_begin(ev_t ev);
@@ -472,7 +470,6 @@ local evs = {
 local function run()
 	while true do
 		local curr = monotime();
-		local any = false;
 
 		-- NOTE: this can be implemented as a sorted list, which would be MUCH faster for lots of concurrent sleeps, this is just the simplest logic
 		for i = #sleeps, 1, -1 do
@@ -490,24 +487,20 @@ local function run()
 			if not ok then return nil, err end
 		end
 
-		local soonest_sleep;
+		local timeout;
 		for i = #sleeps, 1, -1 do
-			if not soonest_sleep or soonest_sleep > sleeps[i].time then
-				soonest_sleep = sleeps[i].time;
+			if not timeout or timeout > sleeps[i].time then
+				timeout = sleeps[i].time;
 			end
-
-			any = true;
 		end
 
-		if not any and not libev.ev_busy(loop) then
-			libev.ev_free(loop);
-		end
+		if not timeout and not libev.ev_busy(loop) then return true end
 
 		local ptimeout = nil;
-		if soonest_sleep then
+		if timeout then
 			ptimeout = ffi.new "ev_time_t[1]";
-			ptimeout[0].sec = soonest_sleep - soonest_sleep % 1;
-			ptimeout[0].nsec = (soonest_sleep % 1) * 1000000000;
+			ptimeout[0].sec = timeout - timeout % 1;
+			ptimeout[0].nsec = (timeout % 1) * 1000000000;
 		end
 
 		local pudata = ffi.new "void*[1]";
@@ -520,12 +513,8 @@ local function run()
 
 			local ok, err = pinvoke(handle, perr[0]);
 			if not ok then return nil, err end
-		elseif code == -1 then
-			break;
 		end
 	end
-
-	return true;
 end
 
 local function sleep_until(time)
@@ -580,23 +569,24 @@ local function netcat(url)
 	evs.close(sock);
 end
 
--- fork(netcat, "www.topcheto.eu");
--- fork(netcat, "www.google.com");
--- fork(netcat, "dir.bg");
-
-fork(function ()
-	netcat "www.topcheto.eu";
-	netcat "www.google.com";
-	netcat "dir.bg";
-end)
+fork(netcat, "www.topcheto.eu");
+fork(netcat, "www.google.com");
+fork(netcat, "dir.bg");
 
 -- fork(function ()
--- 	local base = monotime();
+-- 	netcat "www.topcheto.eu";
+-- 	netcat "www.google.com";
+-- 	netcat "dir.bg";
+-- end)
 
--- 	for i = 1, 500 do
--- 		sleep_until(base + i * .01);
--- 		print("MS " .. i * 10);
--- 	end
--- end);
+fork(function ()
+	local base = monotime();
+
+	for i = 1, 500 do
+		sleep_until(base + i * .01);
+		print("====================> MS " .. i * 10);
+	end
+end);
 
 assert(run());
+libev.ev_free(loop);

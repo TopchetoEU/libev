@@ -35,16 +35,17 @@ func sync_call(function ev_func, ev_t loop, ...) {
 
 func run_loop() {
 	while (true) {
-		foreach (task in tasks) {
+		while (tasks.length > 0) {
+			coroutine task = tasks.remove(0);
 			coro_resume(task);
 		}
 
-		// Exit out when all tasks & tickets are done
-		if (!ev_busy(loop)) ev_free(loop);
+		// Exit out when all operations are complete
+		if (!ev_busy(loop)) break;
 
 		void *udata;
 		int err;
-		if (!ev_poll(loop, true, &udata, &err)) break;
+		if (!ev_poll(loop, true, NULL, &udata, &err)) break;
 
 		coro_resume(callbacks[(int)udata], err);
 		delete callbacks[(int)udata];
