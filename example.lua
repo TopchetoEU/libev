@@ -1,17 +1,17 @@
 local ffi = require "ffi";
 
-local libev = ffi.load "./bin/libev.so";
 local libc = ffi.C;
-_G.libev = libevm;
-
-
 ffi.cdef [[
 	typedef int64_t off_t;
 	typedef int ev_code_t;
 
 	void free(void *ptr);
+	int printf(const char *fmt, ...);
+]];
 
-	#line 13
+local libev = ffi.load "./bin/libev.so";
+ffi.cdef [[
+#line 13
 
 typedef struct ev *ev_t;
 
@@ -38,6 +38,15 @@ typedef enum {
 	// Opens the file in direct mode
 	EV_OPEN_DIRECT = 32,
 } ev_open_flags_t;
+
+typedef enum {
+	EV_PATH_HOME,
+	EV_PATH_CONFIG,
+	EV_PATH_DATA,
+	EV_PATH_CACHE,
+	EV_PATH_RUNTIME,
+	EV_PATH_CWD,
+} ev_path_type_t;
 
 typedef enum {
 	EV_ADDR_IPV4,
@@ -134,12 +143,8 @@ const char *ev_strerr(ev_code_t code);
 
 // Creates an ev instance. Combines a queue and a thread pool
 ev_t ev_init();
-// Puts the loop in a special "closed" state. This means that all new (well-behaving)
-// tasks will immediately pushes the ticket with an error code.
-// In this mode, when all the remaining tickets get polled, all resources, associated with this loop will be released.
-// NOTE: this behavior means that at least one ev_poll call is required to actually free the loop after ev_free was called
-// After that, using this event loop is UB.
-// Calling this function multiple times is safe
+// Cancels all filesystem operations, waits for all worker threads to finish and frees all resources of the loop
+// Safe(ish) to call in GCs
 void ev_free(ev_t ev);
 
 // Checks if ev still has pending operations
@@ -206,6 +211,63 @@ ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_a
 ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
+
+// Gets a malloc'd string, representing the requested path
+ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
+]];
+
+local libev_dyn = ffi.load "./bin/libev-dyn.so";
+ffi.cdef [[
+// A simple wrapper around libffi, so that ev_exec can be used by dynamic languages
+
+typedef struct ev_dyn_sig *ev_dyn_sig_t;
+typedef struct ev_dyn_args *ev_dyn_args_t;
+
+// Creates a signature, that can then be used in ev_dyn_args_t
+// First type is the return type, the rest are the arguments, no variadic args allowed
+// Return EINVAL if sig's syntax is invalid
+//
+// Types:
+//     v -> void (may not be used as a standalone argument)
+//     c -> char
+//     is -> int
+//     i -> int
+//     il -> long int
+//     ill -> long long int
+//     f -> float
+//     d -> double
+//     dl -> long double
+//     i8 -> int8_t
+//     i16 -> int16_t
+//     i32 -> int32_t
+//     i64 -> int64_t
+//     * -> a pointer
+//     (...types) -> structure of the given types
+//
+// Example: struct { int a; int b; }* (int a, int b, my_ptr_t *c) -> (ii)ii*
+ev_code_t ev_dyn_sig_new(void *func, const char *sig, ev_dyn_sig_t *pres);
+// Releases all resources, used by this signature
+// It goes without saying that this must be called after all callbacks, depending on these have begun execution
+void ev_dyn_sig_free(ev_dyn_sig_t sig);
+
+// Creates arguments for ev_dyn_cb. Freeing the structure is handled by ev_dyn_cb
+// Returns NULL when out of memory (aka EV_ENOMEM is implied)
+ev_dyn_args_t ev_dyn_args_new(ev_dyn_sig_t sig, void *pret, void **args);
+
+// A callback, usable in ev_exec. Always will report EV_OK
+// Must be passed a ev_dyn_args_t
+//
+// Example usage:
+//     ev_dyn_sig_t sig;
+//     ev_dyn_mksig(printf, "i*ii", &sig);
+//
+//     int res;
+//
+//     const char *fmt = "A = %d, B = %d\n";
+//     int a = 10;
+//     int b = 5;
+//     ev_exec(ev_dyn_cb, ev_dyn_mkargs(sig, &res, (void[]) { &fmt, &a, &b }));
+int ev_dyn_cb(void *pargs);
 ]];
 
 local curr_tag = 0;
@@ -232,7 +294,7 @@ local function call_wrap(func, cb, ...)
 	curr_tag = curr_tag + 1;
 	local tag = curr_tag;
 	local code = func(loop, ffi.cast("void*", tag), ...);
-	if code ~= 0 then return nil, libev.ev_strerr(code), code end
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
 	handles[tag] = cb;
 	return true;
 end
@@ -267,7 +329,7 @@ function ev.open(cb, path, flags, mode)
 	local pres = ffi.new "ev_fd_t[1]";
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pres[0]);
 	end
 
@@ -280,7 +342,7 @@ function ev.rawread(cb, fd, offset, n, ptr)
 	local pn = ffi.new("size_t[1]", n);
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pn[0], ptr);
 	end
 
@@ -290,7 +352,7 @@ function ev.rawwrite(cb, fd, offset, n, ptr)
 	local pn = ffi.new("size_t[1]", n);
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pn[0], ptr);
 	end
 
@@ -317,7 +379,7 @@ function ev.stat(cb, fd)
 	local pbuff = ffi.new "ev_stat_t[1]";
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pbuff[0]);
 	end
 
@@ -326,7 +388,7 @@ end
 
 function ev.mkdir(cb, path, mode)
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, true);
 	end
 
@@ -336,7 +398,7 @@ function ev.opendir(cb, path)
 	local pres = ffi.new "ev_dir_t[1]";
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pres[0]);
 	end
 
@@ -349,7 +411,7 @@ function ev.readdir(cb, dir)
 	local pname = ffi.new "char*[1]";
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pname[0]);
 	end
 
@@ -369,7 +431,7 @@ function ev.connect(cb, addr, port, type)
 	end
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pres[0]);
 	end
 
@@ -388,7 +450,7 @@ function ev.bind(cb, addr, port, type)
 	end
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pres[0]);
 	end
 
@@ -400,7 +462,7 @@ function ev.accept(cb, server)
 	local pport = ffi.new "uint16_t[1]";
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, pres[0], paddr[0], pport[0]);
 	end
 
@@ -410,7 +472,7 @@ function ev.getaddrinfo(cb, name, flags)
 	local pres = ffi.new "ev_addrinfo_t[1]";
 
 	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, libev.ev_strerr(code), code) end
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 
 		local res = {};
 
@@ -433,6 +495,48 @@ function ev.getaddrinfo(cb, name, flags)
 	end
 
 	return call_wrap(libev.ev_getaddrinfo, handle, pres, name, flags);
+end
+
+function ev.getpath(cb, type)
+	local pres = ffi.new "char*[1]";
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		local res = ffi.string(pres[0]);
+		libc.free(pres[0]);
+		return invoke(cb, res);
+	end
+
+	return call_wrap(libev.ev_getpath, handle, pres, type);
+end
+
+--- @param str string
+function ev.mksig(func, str)
+	local pres = ffi.new "ev_dyn_sig_t[1]";
+	local code = libev_dyn.ev_dyn_sig_new(func, str, pres);
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)) end
+	return function (cb, pret, ...)
+		local args = ffi.new("void*[?]", select("#", ...) + 1);
+		args[select("#", ...)] = nil;
+
+		for i = 1, select("#", ...) do
+			local arg = select(i, ...);
+			if type(arg) == "string" then
+				arg = ffi.cast("char*", arg);
+			end
+
+			local arg_type = ffi.typeof(arg);
+			local slot = ffi.typeof("$[1]", arg_type)();
+			slot[0] = ffi.cast(arg_type, arg);
+			-- slot[0] = arg;
+			args[i - 1] = slot;
+		end
+
+		local pargs = libev_dyn.ev_dyn_args_new(pres[0], pret, args);
+		print(args);
+
+		return call_wrap(libev.ev_exec, cb, libev_dyn.ev_dyn_cb, pargs, false);
+	end
 end
 
 local function hnd(...)
@@ -465,6 +569,8 @@ local evs = {
 	bind = syncify(ev.bind),
 	accept = syncify(ev.accept),
 	getaddrinfo = syncify(ev.getaddrinfo),
+
+	getpath = syncify(ev.getpath),
 };
 
 local function run()
@@ -569,9 +675,9 @@ local function netcat(url)
 	evs.close(sock);
 end
 
-fork(netcat, "www.topcheto.eu");
-fork(netcat, "www.google.com");
-fork(netcat, "dir.bg");
+-- fork(netcat, "www.topcheto.eu");
+-- fork(netcat, "www.google.com");
+-- fork(netcat, "dir.bg");
 
 -- fork(function ()
 -- 	netcat "www.topcheto.eu";
@@ -579,13 +685,25 @@ fork(netcat, "dir.bg");
 -- 	netcat "dir.bg";
 -- end)
 
-fork(function ()
-	local base = monotime();
+local sig_printf = assert(ev.mksig(libc.printf, "i*ii"));
 
-	for i = 1, 500 do
-		sleep_until(base + i * .01);
-		print("====================> MS " .. i * 10);
-	end
+fork(function ()
+	print(evs.getpath(0));
+	print(evs.getpath(1));
+	print(evs.getpath(2));
+	print(evs.getpath(3));
+	print(evs.getpath(4));
+	print(evs.getpath(5));
+
+	sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
+	sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
+	coroutine.yield();
+	-- local base = monotime();
+
+	-- for i = 1, 500 do
+	-- 	sleep_until(base + i * .01);
+	-- 	print("====================> MS " .. i * 10);
+	-- end
 end);
 
 assert(run());
