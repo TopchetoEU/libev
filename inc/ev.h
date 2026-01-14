@@ -1,4 +1,5 @@
-#pragma once
+#ifndef EV_H
+#define EV_H
 
 #include "ev/errno.h"
 

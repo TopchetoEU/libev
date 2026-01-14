@@ -1,5 +1,5 @@
-#pragma once
-
+#ifndef EV_ERRNO_H
+#define EV_ERRNO_H
 
 // These have more or less been ripped from libuv
 
@@ -95,3 +95,5 @@ typedef enum {
 	EV_ECHARSET = -2001, // invalid Unicode character
 	EV_EUNKNOWN = -3000, // unknown OS-specific error
 } ev_code_t;
+
+#endif

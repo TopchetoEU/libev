@@ -1,3 +1,6 @@
+#ifndef EV_CONF_H
+#define EV_CONF_H
+
 #pragma once
 
 // 1. Infer sensible defaults
@@ -45,4 +48,6 @@
 
 #if defined EV_USE_URING
 	#define _GNU_SOURCE
+#endif
+
 #endif
