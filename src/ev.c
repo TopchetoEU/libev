@@ -537,6 +537,8 @@ typedef struct { ev_fd_t *pres; ev_proto_t proto; ev_addr_t addr; uint16_t port;
 typedef struct { ev_fd_t *pres; ev_addr_t *paddr; uint16_t *pport; ev_fd_t server; } evi_accept_args_t;
 typedef struct { ev_addrinfo_t *pres; const char *name; ev_addrinfo_flags_t flags; } evi_getaddrinfo_args_t;
 
+typedef struct { char **pres; ev_path_type_t type; } evi_getpath_args_t;
+
 static int evi_open_worker(void *pargs) {
 	evi_open_args_t args = *(evi_open_args_t*)pargs;
 	free(pargs);
@@ -593,6 +595,13 @@ static int evi_getaddrinfo_worker(void *pargs) {
 	evi_getaddrinfo_args_t args = *(evi_getaddrinfo_args_t*)pargs;
 	free(pargs);
 	return evi_sync_getaddrinfo(args.pres, args.name, args.flags);
+}
+
+static int evi_getpath_worker(void *pargs) {
+	evi_getpath_args_t args = *(evi_getpath_args_t*)pargs;
+	free(pargs);
+	return evi_sync_getpath(args.pres, args.type);
+	// return 0;
 }
 
 ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
@@ -722,6 +731,15 @@ ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *
 	pargs->name = name;
 	pargs->flags = flags;
 	return ev_exec(ev, udata, evi_getaddrinfo_worker, pargs, false);
+}
+
+ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type) {
+	evi_getpath_args_t *pargs = malloc(sizeof *pargs);
+	if (!pargs) return EV_ENOMEM;
+
+	pargs->pres = pres;
+	pargs->type = type;
+	return ev_exec(ev, udata, evi_getpath_worker, pargs, false);
 }
 
 ev_fd_t ev_stdin(ev_t ev) {

@@ -34,6 +34,15 @@ typedef enum {
 } ev_open_flags_t;
 
 typedef enum {
+	EV_PATH_HOME,
+	EV_PATH_CONFIG,
+	EV_PATH_DATA,
+	EV_PATH_CACHE,
+	EV_PATH_RUNTIME,
+	EV_PATH_CWD,
+} ev_path_type_t;
+
+typedef enum {
 	EV_ADDR_IPV4,
 	EV_ADDR_IPV6,
 	// TODO: bluetooth maybe?
@@ -196,3 +205,8 @@ ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_a
 ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
+
+// Gets a malloc'd string, representing the requested path
+ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
+
+#endif

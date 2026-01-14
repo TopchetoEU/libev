@@ -18,6 +18,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <ws2ipdef.h>
+#include <shlobj.h>
 
 // FIXME: never before run code, shat it out in an evening.
 // Consider windows as unsupported, until I can be bothered to cross-compile luajit
@@ -366,6 +367,61 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 
 	*pres = res;
 	return EV_OK;
+}
+
+static char *evi_win_getpath(int id, const char *suffix) {
+	char *res = suffix ? malloc(MAX_PATH + strlen(suffix) + 1) : malloc(MAX_PATH);
+	if (!res) return NULL;
+	if (SHGetFolderPath(NULL, id, NULL, 0, res) != S_OK) return NULL;
+
+	if (suffix) strcpy(res, suffix);
+	res = realloc(res, strlen(res) + 1);
+	return res;
+}
+
+static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
+	switch (type) {
+		case EV_PATH_HOME: {
+			char *res = evi_win_getpath(CSIDL_PROFILE, NULL);
+			if (!res) return evi_win_conv_errno(GetLastError());
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_RUNTIME:
+		case EV_PATH_CACHE: {
+			char *res = evi_win_getpath(CSIDL_LOCAL_APPDATA, "\\Temp");
+			if (!res) return evi_win_conv_errno(GetLastError());
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_CONFIG: {
+			char *res = evi_win_getpath(CSIDL_APPDATA, NULL);
+			if (!res) return evi_win_conv_errno(GetLastError());
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_DATA: {
+			char *res = evi_win_getpath(CSIDL_LOCAL_APPDATA, NULL);
+			if (!res) return evi_win_conv_errno(GetLastError());
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_CWD: {
+			char *path = malloc(MAX_PATH + 1);
+			if (!path) return evi_win_conv_errno(GetLastError());
+			if (!GetCurrentDirectory(sizeof path, path)) return evi_win_conv_errno(GetLastError());
+
+			path = realloc(path, strlen(path) + 1);
+			*pres = path;
+			return EV_OK;
+		}
+	}
+
+	return EV_EINVAL;
 }
 
 int ev_realtime(ev_time_t *pres) {

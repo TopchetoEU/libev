@@ -1,11 +1,10 @@
-#include "ev/errno.h"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
+#include "ev/conf.h"
 #include "ev.h"
+#include "ev/errno.h"
 #include "./common.h"
-#include <asm-generic/errno-base.h>
-#include <bits/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,8 +13,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <errno.h>
 #include <netdb.h>
+#include <errno.h>
+#include <pwd.h>
 #include <time.h>
 
 struct ev_dir {};
@@ -230,6 +230,129 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 
 	*pres = res;
 	return EV_OK;
+}
+
+// static const char =
+
+static char *evi_unix_gethome(const char *suffix) {
+	struct passwd resbuf[1];
+	struct passwd *ppwd;
+	char *buff = malloc(1024);
+	if (!buff) return NULL;
+
+	size_t buffn = 1024;
+
+	while (true) {
+		getpwuid_r(getuid(), resbuf, buff, buffn, &ppwd);
+		if (ppwd) break;
+		if (errno == ERANGE) {
+			buffn *= 2;
+			free(buff);
+			buff = malloc(buffn);
+			if (!buff) return NULL;
+		}
+		else {
+			free(buff);
+			return NULL;
+		}
+	}
+
+	if (suffix) {
+		char *res = malloc(strlen(ppwd->pw_dir) + strlen(suffix) + 1);
+		if (!res) return NULL;
+
+		strcpy(res, ppwd->pw_dir);
+		strcat(res, suffix);
+		free(buff);
+		return res;
+	}
+	else {
+		char *res = malloc(strlen(ppwd->pw_dir) + 1);
+		strcpy(res, ppwd->pw_dir);
+		free(buff);
+		return res;
+	}
+}
+static char *evi_unix_getpath(const char *envname, const char *suffix) {
+	const char *env = getenv(envname);
+	if (env && *env) {
+		char *res = malloc(strlen(env) + 1);
+		if (!res) return NULL;
+
+		strcpy(res, env);
+		return res;
+	}
+
+	return evi_unix_gethome(suffix);
+}
+
+static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
+	switch (type) {
+		case EV_PATH_HOME: {
+			char *res = evi_unix_gethome(NULL);
+			if (!res) return evi_unix_conv_errno(errno);
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_CACHE: {
+			char *res = evi_unix_getpath("XDG_CACHE_HOME", "/.cache");
+			if (!res) return evi_unix_conv_errno(errno);
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_CONFIG: {
+			char *res = evi_unix_getpath("XDG_CONFIG_HOME", "/.config");
+			if (!res) return evi_unix_conv_errno(errno);
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_DATA: {
+			char *res = evi_unix_getpath("XDG_DATA_HOME", "/.local/share");
+			if (!res) return evi_unix_conv_errno(errno);
+
+			*pres = res;
+			return EV_OK;
+		}
+		case EV_PATH_RUNTIME: {
+			const char *res;
+
+			const char *env = getenv("XDG_RUNTIME_DIR");
+			if (env && *env) res = env;
+			else res = "/tmp";
+
+			*pres = malloc(strlen(res) + 1);
+			if (!*pres) return evi_unix_conv_errno(errno);
+
+			strcpy(*pres, res);
+			return EV_OK;
+		}
+		case EV_PATH_CWD: {
+			char *buff = malloc(1024);
+			size_t buffn = 1024;
+			if (!buff) return EV_ENOMEM;
+
+			while (true) {
+				if (!getcwd(buff, buffn) == 0) break;
+				if (errno != ERANGE) {
+					free(buff);
+					return evi_unix_conv_errno(errno);
+				}
+
+				buffn *= 2;
+				free(buff);
+				buff = malloc(buffn);
+				if (!buff) return EV_ENOMEM;
+			}
+
+			*pres = realloc(buff, strlen(buff) + 1);
+			return EV_OK;
+		}
+	}
+
+	return EV_EINVAL;
 }
 
 int ev_realtime(ev_time_t *pres) {
