@@ -355,6 +355,14 @@ static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
 	return EV_EINVAL;
 }
 
+static void evi_sleep(ev_time_t time) {
+	struct timespec req = { .tv_sec = time.sec, .tv_nsec = time.nsec };
+	while (true) {
+		if (nanosleep(&req, NULL) == 0) break;
+		if (errno == EINTR) continue;
+	}
+}
+
 int ev_realtime(ev_time_t *pres) {
 	struct timespec res;
 	if (clock_gettime(CLOCK_REALTIME, &res) < 0) return -1;

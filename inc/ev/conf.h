@@ -6,18 +6,27 @@
 // 1. Infer sensible defaults
 
 #if defined __unix__
-	#define EV_USE_UNIX
+	#ifndef EV_USE_UNIX
+		#define EV_USE_UNIX
+	#endif
 
-	#if defined __linux
-		#define EV_USE_LINUX
-		#define EV_USE_URING
+	#if !defined __linux
+		#ifndef EV_USE_LINUX
+			#define EV_USE_LINUX
+		#endif
+		#ifndef EV_USE_URING
+			#define EV_USE_URING
+		#endif
+	#endif
+
+	#ifndef EV_USE_MULTITHREAD
+		#define EV_USE_MULTITHREAD
+	#endif
+	#ifndef EV_USE_PTHREAD
+		#define EV_USE_PTHREAD
 	#endif
 #elif defined WIN32
 	#define EV_USE_WIN32
-#endif
-
-#if !defined EV_USE_PTHREAD
-	#define EV_USE_PTHREAD
 #endif
 
 #define EV_USE_PTRTAG
@@ -37,7 +46,11 @@
 #if defined EV_NO_USE_URING
 	#undef EV_USE_URING
 #endif
-#if defined EV_NO_USE_PTHREAD
+#ifdef EV_NO_USE_MULTITHREAD
+	#undef EV_USE_PTHREAD
+	#undef EV_USE_MULTITHREAD
+#endif
+#ifdef EV_NO_USE_PTHREAD
 	#undef EV_USE_PTHREAD
 #endif
 #if defined EV_NO_USE_PTRTAG

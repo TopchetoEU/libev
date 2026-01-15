@@ -19,7 +19,9 @@ typedef struct ev_uring {
 	struct io_uring ctx;
 	ev_t ev;
 
-	ev_thread_t worker;
+	#ifdef EV_USE_MULTITHREAD
+		ev_thread_t worker;
+	#endif
 
 	bool kys;
 } *ev_uring_t;
@@ -137,7 +139,6 @@ static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres,
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
-
 
 static void *evi_uring_worker(void *arg) {
 	ev_uring_t uring = (ev_uring_t)arg;

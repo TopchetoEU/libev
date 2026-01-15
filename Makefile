@@ -3,8 +3,6 @@ override CCFLAGS += -Wall
 override CCFLAGS += -Wextra
 override CCFLAGS += -fPIC
 
-$(info $())
-
 override LDFLAGS += $(shell pkg-config --libs liburing)
 override CCFLAGS += $(shell pkg-config --cflags liburing)
 

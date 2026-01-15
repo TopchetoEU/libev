@@ -32,8 +32,10 @@ typedef struct ev_msg {
 struct ev {
 	size_t active_n;
 
-	ev_mutex_t lock;
-	ev_cond_t has_msg_cond;
+	#ifdef EV_USE_MULTITHREAD
+		ev_mutex_t lock;
+		ev_cond_t has_msg_cond;
+	#endif
 
 	ev_msg_t next_msg;
 
@@ -184,6 +186,22 @@ int64_t ev_timems(ev_time_t time) {
 
 // EV CORE FUNCS
 
+static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
+	ev_msg_t msg = malloc(sizeof *msg);
+	if (!msg) return EV_ENOMEM;
+
+	msg->next = ev->next_msg;
+	msg->udata = udata;
+	msg->err = err;
+	ev->next_msg = msg;
+
+	#ifdef EV_USE_PTHREAD
+		ev_cond_broadcast(ev->has_msg_cond);
+	#endif
+
+	return EV_OK;
+}
+
 #ifdef EV_USE_PTHREAD
 	typedef struct ev_pool_worker {
 		struct ev_pool_worker *next;
@@ -203,57 +221,36 @@ int64_t ev_timems(ev_time_t time) {
 		ev_t sync;
 	} *ev_sync_args_t;
 
-	static void *evi_pool_worker_entry(void *pargs) {
+	static void evi_pool_worker_entry(void *pargs) {
 		ev_pool_worker_t worker = (ev_pool_worker_t)pargs;
 		ev_t ev = worker->ev;
 
 		ev_mutex_lock(ev->lock);
 
 		while (true) {
+			if (worker->kys) break;
+			if (worker->worker) {
+				void *udata = worker->udata;
+				ev_worker_t cb = worker->worker;
+				void *args = worker->args;
+				worker->worker = NULL;
+				worker->args = NULL;
+				worker->udata = NULL;
 
-			while (true) {
-				if (worker->kys) goto end;
-				if (worker->worker) break;
-
-				ev_cond_wait(worker->cond, ev->lock);
+				ev_mutex_unlock(ev->lock);
+				ev_code_t code = cb(args);
+				ev_mutex_lock(ev->lock);
+				if (code != EV_EINTR) {
+					evi_push(ev, udata, code);
+				}
 			}
 
-			void *udata = worker->udata;
-			ev_worker_t cb = worker->worker;
-			void *args = worker->args;
-			worker->worker = NULL;
-			worker->args = NULL;
-			worker->udata = NULL;
-
-			ev_mutex_unlock(ev->lock);
-			int code = cb(args);
-			ev_push(ev, udata, code);
-			ev_mutex_lock(ev->lock);
+			ev_cond_wait(worker->cond, ev->lock);
 		}
 
-	end:
 		ev_mutex_unlock(ev->lock);
-		ev_cond_free(worker->cond);
-		free(worker);
-		return NULL;
 	}
 #endif
-
-static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
-	ev_msg_t msg = malloc(sizeof *msg);
-	if (!msg) return EV_ENOMEM;
-
-	msg->next = ev->next_msg;
-	msg->udata = udata;
-	msg->err = err;
-	ev->next_msg = msg;
-
-	#ifdef EV_USE_PTHREAD
-		ev_cond_broadcast(ev->has_msg_cond);
-	#endif
-
-	return EV_OK;
-}
 
 const char *ev_strerr(ev_code_t code) {
 	switch (code) {
@@ -386,6 +383,14 @@ fail_stdio:
 void ev_free(ev_t ev) {
 	ev_mutex_lock(ev->lock);
 
+	evi_stdio_free(ev->in, ev->out, ev->err);
+
+	#ifdef EV_USE_URING
+		evi_uring_free(ev->uring);
+	#elif defined EV_USE_WIN32
+		evi_win_free();
+	#endif
+
 	#ifdef EV_USE_PTHREAD
 		while (ev->next_worker) {
 			ev_pool_worker_t curr = ev->next_worker;
@@ -398,6 +403,8 @@ void ev_free(ev_t ev) {
 			ev_mutex_unlock(ev->lock);
 			ev_thread_free_join(curr->thread);
 			ev_mutex_lock(ev->lock);
+			ev_cond_free(curr->cond);
+			free(curr);
 		}
 
 		ev->next_worker = NULL;
@@ -406,14 +413,6 @@ void ev_free(ev_t ev) {
 
 		ev_mutex_unlock(ev->lock);
 		ev_mutex_free(ev->lock);
-	#endif
-
-	evi_stdio_free(ev->in, ev->out, ev->err);
-
-	#ifdef EV_USE_URING
-		evi_uring_free(ev->uring);
-	#elif defined EV_USE_WIN32
-		evi_win_free();
 	#endif
 }
 
@@ -481,13 +480,12 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 		}
 		else fallback: {
 	#endif
-			ev->active_n++;
-
 			int code = worker(pargs);
 			if (code == EV_ECANCELED) return EV_ECANCELED;
 
 			int errcode = evi_push(ev, udata, code);
 
+			ev->active_n++;
 			ev_mutex_unlock(ev->lock);
 			return errcode;
 	#ifdef EV_USE_PTHREAD
@@ -498,15 +496,26 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **puda
 	ev_mutex_lock(ev->lock);
 
 	while (!ev->next_msg && wait) {
-		if (ptimeout) {
-			if (ev_cond_timewait(ev->has_msg_cond, ev->lock, *ptimeout) == EV_ETIMEDOUT) {
-				ev_mutex_unlock(ev->lock);
-				return EV_POLL_TIMEOUT;
+		#ifdef EV_USE_MULTITHREAD
+			if (ptimeout) {
+				if (ev_cond_timewait(ev->has_msg_cond, ev->lock, *ptimeout) == EV_ETIMEDOUT) {
+					ev_mutex_unlock(ev->lock);
+					return EV_POLL_TIMEOUT;
+				}
 			}
-		}
-		else {
-			ev_cond_wait(ev->has_msg_cond, ev->lock);
-		}
+			else {
+				ev_cond_wait(ev->has_msg_cond, ev->lock);
+			}
+		#else
+			if (ptimeout) {
+				evi_sleep(*ptimeout);
+			}
+			else {
+				// In non-threaded mode, it is impossible for us to get a message while we're blocked
+				// So we disobey the user and return empty instead
+				return EV_POLL_EMPTY;
+			}
+		#endif
 	}
 
 	ev_msg_t msg = ev->next_msg;
