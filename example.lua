@@ -19,6 +19,7 @@ typedef struct ev *ev_t;
 typedef int (*ev_worker_t)(void *pargs);
 
 typedef struct ev_fd *ev_fd_t;
+typedef struct ev_socket *ev_socket_t;
 typedef struct ev_dir *ev_dir_t;
 
 typedef enum {
@@ -204,14 +205,20 @@ ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to socket() + connect()
-ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to posix's accept
-ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
+ev_code_t ev_accept(ev_t ev, void *udata, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server);
+// Equivalent to posix's recv
+ev_code_t ev_recv(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
+// Equivalent to posix's send
+ev_code_t ev_send(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
+// Equivalent to posix's close (but for sockets)
+void ev_closesock(ev_t ev, ev_socket_t sock);
+
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
-
 // Gets a malloc'd string, representing the requested path
 ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
 ]];
@@ -405,7 +412,7 @@ function ev.opendir(cb, path)
 	return call_wrap(libev.ev_opendir, handle, pres, path);
 end
 function ev.closedir(dir)
-	libev.ev_closedir(dir);
+	libev.ev_closedir(loop, dir);
 end
 function ev.readdir(cb, dir)
 	local pname = ffi.new "char*[1]";
@@ -420,7 +427,7 @@ end
 
 function ev.connect(cb, addr, port, type)
 	local itype;
-	local pres = ffi.new "ev_fd_t[1]";
+	local pres = ffi.new "ev_socket_t[1]";
 
 	if type == "tcp" then
 		itype = 0;
@@ -439,7 +446,7 @@ function ev.connect(cb, addr, port, type)
 end
 function ev.bind(cb, addr, port, type)
 	local itype;
-	local pres = ffi.new "ev_fd_t[1]";
+	local pres = ffi.new "ev_socket_t[1]";
 
 	if type == "tcp" then
 		itype = 0;
@@ -457,7 +464,7 @@ function ev.bind(cb, addr, port, type)
 	return call_wrap(libev.ev_bind, handle, pres, parse_ip(addr), port, itype);
 end
 function ev.accept(cb, server)
-	local pres = ffi.new "ev_fd_t[1]";
+	local pres = ffi.new "ev_socket_t[1]";
 	local paddr = ffi.new "ev_addr_t[1]";
 	local pport = ffi.new "uint16_t[1]";
 
@@ -468,6 +475,47 @@ function ev.accept(cb, server)
 
 	return call_wrap(libev.ev_accept, handle, pres, paddr, pport, server);
 end
+function ev.rawrecv(cb, sock, n, ptr)
+	local pn = ffi.new("size_t[1]", n);
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, pn[0], ptr);
+	end
+
+	return call_wrap(libev.ev_recv, handle, sock, ptr, pn);
+end
+function ev.rawsend(cb, sock, n, ptr)
+	local pn = ffi.new("size_t[1]", n);
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, pn[0], ptr);
+	end
+
+	return call_wrap(libev.ev_send, handle, sock, ptr, pn);
+end
+function ev.recv(cb, sock, n)
+	local buff = ffi.new("char[?]", n);
+
+	return ev.rawrecv(function (n, ptr)
+		if not n then return invoke(cb, n, ptr) end
+		return invoke(cb, ffi.string(ptr, n));
+	end, sock, n, buff);
+end
+function ev.send(cb, sock, str)
+	local buff = ffi.new("char[?]", #str);
+	ffi.copy(buff, str, #str);
+
+	return ev.rawsend(function (n, ptr)
+		if not n then return invoke(cb, n, ptr) end
+		return invoke(cb, n);
+	end, sock, #str, buff);
+end
+function ev.closesock(dir)
+	libev.ev_closesock(loop, dir);
+end
+
 function ev.getaddrinfo(cb, name, flags)
 	local pres = ffi.new "ev_addrinfo_t[1]";
 
@@ -496,7 +544,6 @@ function ev.getaddrinfo(cb, name, flags)
 
 	return call_wrap(libev.ev_getaddrinfo, handle, pres, name, flags);
 end
-
 function ev.getpath(cb, type)
 	local pres = ffi.new "char*[1]";
 
@@ -533,8 +580,6 @@ function ev.mksig(func, str)
 		end
 
 		local pargs = libev_dyn.ev_dyn_args_new(pres[0], pret, args);
-		print(args);
-
 		return call_wrap(libev.ev_exec, cb, libev_dyn.ev_dyn_cb, pargs, false);
 	end
 end
@@ -553,23 +598,26 @@ end
 
 local evs = {
 	open = syncify(ev.open),
-	close = ev.close,
 	rawread = syncify(ev.rawread),
 	rawwrite = syncify(ev.rawwrite),
 	read = syncify(ev.read),
 	write = syncify(ev.write),
 	stat = syncify(ev.stat),
+	close = ev.close,
 
 	mkdir = syncify(ev.mkdir),
 	opendir = syncify(ev.opendir),
-	closedir = ev.closedir,
 	readdir = syncify(ev.readdir),
+	closedir = ev.closedir,
 
 	connect = syncify(ev.connect),
 	bind = syncify(ev.bind),
 	accept = syncify(ev.accept),
-	getaddrinfo = syncify(ev.getaddrinfo),
+	recv = syncify(ev.recv),
+	send = syncify(ev.send),
+	closesock = ev.closesock,
 
+	getaddrinfo = syncify(ev.getaddrinfo),
 	getpath = syncify(ev.getpath),
 };
 
@@ -665,19 +713,23 @@ local stderr = libev.ev_stderr(loop);
 local function netcat(url)
 	local sock = assert(open_tcp(url, 80));
 
-	assert(evs.write(sock, 0, "GET / HTTP/1.1\r\nHost: " .. url .. "\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
-	while true do
-		local res = assert(evs.read(sock, 0, 10000));
-		if #res == 0 then break end
+	local i = 0;
 
+	assert(evs.send(sock, "GET / HTTP/1.1\r\nHost: " .. url .. "\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
+	while true do
+		local res = assert(evs.recv(sock, 10000));
+		if #res == 0 then break end
+		i = i + 10000;
+
+		-- io.stderr:write(res);
 		assert(evs.write(stderr, 0, res));
 	end
-	evs.close(sock);
+	evs.closesock(sock);
 end
 
--- fork(netcat, "www.topcheto.eu");
--- fork(netcat, "www.google.com");
--- fork(netcat, "dir.bg");
+fork(netcat, "www.google.com");
+fork(netcat, "www.topcheto.eu");
+fork(netcat, "www.dir.bg");
 
 -- fork(function ()
 -- 	netcat "www.topcheto.eu";
@@ -688,22 +740,19 @@ end
 local sig_printf = assert(ev.mksig(libc.printf, "i*ii"));
 
 fork(function ()
-	print(evs.getpath(0));
-	print(evs.getpath(1));
-	print(evs.getpath(2));
-	print(evs.getpath(3));
-	print(evs.getpath(4));
-	print(evs.getpath(5));
-
 	sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
+	coroutine.yield();
 	sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
 	coroutine.yield();
-	-- local base = monotime();
+end);
 
-	-- for i = 1, 500 do
-	-- 	sleep_until(base + i * .01);
-	-- 	print("====================> MS " .. i * 10);
-	-- end
+fork(function ()
+	local base = monotime();
+
+	for i = 1, 50 do
+		sleep_until(base + i * .01);
+		print("====================> MS " .. i * 10);
+	end
 end);
 
 assert(run());
