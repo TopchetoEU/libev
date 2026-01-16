@@ -186,7 +186,7 @@ static ev_code_t evi_sync_accept(ev_socket_t *pres, ev_addr_t *paddr, uint16_t *
 	socklen_t addr_len;
 
 	int client = accept((int)(size_t)server, (void*)&addr, &addr_len);
-	if (!client) return evi_unix_conv_errno(errno);
+	if (client < 0) return evi_unix_conv_errno(errno);
 
 	evi_unix_conv_sockaddr(&addr, paddr, pport);
 	*pres = evi_unix_mksock(client);
