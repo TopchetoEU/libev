@@ -6,7 +6,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#if EV_USE_MULTITHREAD && defined EV_USE_WIN32
+#if defined EV_USE_MULTITHREAD && defined EV_USE_WIN32
 	#include <winsock2.h>
 	#include <windows.h>
 
@@ -39,7 +39,7 @@
 	}
 	#define ev_cond_broadcast(cond) (void)WakeAllConditionVariable(cond)
 	#define ev_cond_signal(cond) (void)WakeConditionVariable(cond)
-#elif EV_USE_MULTITHREAD && defined EV_USE_PTHREAD
+#elif defined EV_USE_MULTITHREAD && defined EV_USE_PTHREAD
 	#include <errno.h>
 	#include <pthread.h>
 	#include <signal.h>

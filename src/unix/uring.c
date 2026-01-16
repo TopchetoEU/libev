@@ -135,7 +135,7 @@ static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_socket_t *p
 	udata->accept.paddr = paddr;
 	udata->accept.pport = pport;
 
-	io_uring_prep_accept(evi_uring_get_sqe(uring, udata), evi_unix_fd(server), (void*)&udata->accept.addr, &udata->accept.len, 0);
+	io_uring_prep_accept(evi_uring_get_sqe(uring, udata), evi_unix_sock(server), (void*)&udata->accept.addr, &udata->accept.len, 0);
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
