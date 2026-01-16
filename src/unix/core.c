@@ -162,14 +162,21 @@ static ev_code_t evi_sync_connect(ev_socket_t *pres, ev_proto_t proto, ev_addr_t
 	*pres = evi_unix_mksock(sock);
 	return EV_OK;
 }
-static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
 	int sock = evi_unix_new_sock(proto, addr.type);
 	if (sock < 0) return evi_unix_conv_errno(errno);
 
 	struct sockaddr_storage arg_addr;
 	int len = evi_unix_conv_addr(addr, port, &arg_addr);
 
-	if (bind(sock, (void*)&arg_addr, len) < 0) return evi_unix_conv_errno(errno);
+	if (bind(sock, (void*)&arg_addr, len) < 0) {
+		close(sock);
+		return evi_unix_conv_errno(errno);
+	}
+	if (listen(sock, max_n) < 0) {
+		close(sock);
+		return evi_unix_conv_errno(errno);
+	}
 
 	*pres = evi_unix_mksock(sock);
 	return EV_OK;

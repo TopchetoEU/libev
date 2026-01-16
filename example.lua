@@ -713,13 +713,10 @@ local stderr = libev.ev_stderr(loop);
 local function netcat(url)
 	local sock = assert(open_tcp(url, 80));
 
-	local i = 0;
-
 	assert(evs.send(sock, "GET / HTTP/1.1\r\nHost: " .. url .. "\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
 	while true do
-		local res = assert(evs.recv(sock, 10000));
+		local res = assert(evs.recv(sock, 100));
 		if #res == 0 then break end
-		i = i + 10000;
 
 		-- io.stderr:write(res);
 		assert(evs.write(stderr, 0, res));

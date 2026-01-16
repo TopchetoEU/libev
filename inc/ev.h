@@ -199,7 +199,7 @@ ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
 // Equivalent to socket() + connect()
 ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to posix's accept

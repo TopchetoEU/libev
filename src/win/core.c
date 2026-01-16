@@ -220,14 +220,21 @@ static ev_code_t evi_sync_connect(ev_socket_t *pres, ev_proto_t proto, ev_addr_t
 	*pres = (void*)sock;
 	return EV_OK;
 }
-static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
 	SOCKET sock = evi_win_mksock(proto, addr.type);
 	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
 
 	struct sockaddr_storage arg_addr;
 	int len = evi_win_conv_addr(addr, port, &arg_addr);
 
-	if (bind(sock, (void*)&arg_addr, len) < 0) return evi_win_conv_errno(WSAGetLastError());
+	if (bind(sock, (void*)&arg_addr, len) < 0) {
+		closesocket(sock);
+		return evi_win_conv_errno(WSAGetLastError());
+	}
+	if (listen(sock, max_n) < 0) {
+		closesocket(sock);
+		return evi_win_conv_errno(WSAGetLastError());
+	}
 
 	*pres = (void*)sock;
 	return EV_OK;

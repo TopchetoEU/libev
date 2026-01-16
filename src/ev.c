@@ -540,7 +540,7 @@ typedef struct { const char *path; int mode; } evi_mkdir_args_t;
 typedef struct { ev_dir_t *pres; const char *path; } evi_opendir_args_t;
 typedef struct { ev_dir_t dir; char **pname; } evi_readdir_args_t;
 
-typedef struct { ev_socket_t *pres; ev_proto_t proto; ev_addr_t addr; uint16_t port; } evi_sock_args_t;
+typedef struct { ev_socket_t *pres; ev_proto_t proto; ev_addr_t addr; uint16_t port; size_t max_n; } evi_sock_args_t;
 typedef struct { ev_socket_t *pres; ev_addr_t *paddr; uint16_t *pport; ev_socket_t server; } evi_accept_args_t;
 typedef struct { ev_socket_t sock; char *buff; size_t *pn; } evi_sock_rw_args_t;
 typedef struct { ev_addrinfo_t *pres; const char *name; ev_addrinfo_flags_t flags; } evi_getaddrinfo_args_t;
@@ -592,7 +592,7 @@ static int evi_connect_worker(void *pargs) {
 static int evi_bind_worker(void *pargs) {
 	evi_sock_args_t args = *(evi_sock_args_t*)pargs;
 	free(pargs);
-	return evi_sync_bind(args.pres, args.proto, args.addr, args.port);
+	return evi_sync_bind(args.pres, args.proto, args.addr, args.port, args.max_n);
 }
 static int evi_accept_worker(void *pargs) {
 	evi_accept_args_t args = *(evi_accept_args_t*)pargs;
@@ -716,7 +716,7 @@ ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, 
 	pargs->port = port;
 	return ev_exec(ev, udata, evi_connect_worker, pargs, false);
 }
-ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return EV_ENOMEM;
 
@@ -724,6 +724,7 @@ ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_
 	pargs->proto = proto;
 	pargs->addr = addr;
 	pargs->port = port;
+	pargs->max_n = max_n;
 	return ev_exec(ev, udata, evi_bind_worker, pargs, false);
 }
 ev_code_t ev_accept(ev_t ev, void *udata, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
