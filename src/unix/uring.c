@@ -45,7 +45,7 @@ typedef struct {
 			struct statx buff;
 		} stat;
 		struct {
-			ev_fd_t *pres;
+			ev_socket_t *pres;
 			ev_addr_t *paddr;
 			uint16_t *pport;
 
@@ -128,7 +128,7 @@ static ev_code_t evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_s
 	return EV_OK;
 }
 
-static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
+static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->accept.pres = pres;
@@ -139,8 +139,26 @@ static ev_code_t evi_uring_accept(ev_uring_t uring, void *ticket, ev_fd_t *pres,
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
+static ev_code_t evi_uring_recv(ev_uring_t uring, void *ticket, ev_socket_t fd, char *buff, size_t *n) {
+	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->pn = n;
 
-static void *evi_uring_worker(void *arg) {
+	io_uring_prep_recv(evi_uring_get_sqe(uring, udata), evi_unix_sock(fd), buff, *n, 0);
+	io_uring_submit(&uring->ctx);
+	return EV_OK;
+}
+static ev_code_t evi_uring_send(ev_uring_t uring, void *ticket, ev_socket_t fd, char *buff, size_t *n) {
+	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->pn = n;
+
+	io_uring_prep_send(evi_uring_get_sqe(uring, udata), evi_unix_sock(fd), buff, *n, 0);
+	io_uring_submit(&uring->ctx);
+	return EV_OK;
+}
+
+static void evi_uring_worker(void *arg) {
 	ev_uring_t uring = (ev_uring_t)arg;
 
 	while (!uring->kys) {
@@ -173,7 +191,7 @@ static void *evi_uring_worker(void *arg) {
 					break;
 				case EVI_URING_ACCEPT:
 					evi_unix_conv_sockaddr(&udata->accept.addr, udata->accept.paddr, udata->accept.pport);
-					*udata->accept.pres = evi_unix_mkfd(cqe->res);
+					*udata->accept.pres = evi_unix_mksock(cqe->res);
 					break;
 				default: break;
 			}
@@ -185,7 +203,6 @@ static void *evi_uring_worker(void *arg) {
 	}
 
 	io_uring_queue_exit(&uring->ctx);
-	return NULL;
 }
 
 static ev_code_t evi_uring_init(ev_t ev, ev_uring_t uring) {

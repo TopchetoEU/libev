@@ -540,8 +540,9 @@ typedef struct { const char *path; int mode; } evi_mkdir_args_t;
 typedef struct { ev_dir_t *pres; const char *path; } evi_opendir_args_t;
 typedef struct { ev_dir_t dir; char **pname; } evi_readdir_args_t;
 
-typedef struct { ev_fd_t *pres; ev_proto_t proto; ev_addr_t addr; uint16_t port; } evi_sock_args_t;
-typedef struct { ev_fd_t *pres; ev_addr_t *paddr; uint16_t *pport; ev_fd_t server; } evi_accept_args_t;
+typedef struct { ev_socket_t *pres; ev_proto_t proto; ev_addr_t addr; uint16_t port; } evi_sock_args_t;
+typedef struct { ev_socket_t *pres; ev_addr_t *paddr; uint16_t *pport; ev_socket_t server; } evi_accept_args_t;
+typedef struct { ev_socket_t sock; char *buff; size_t *pn; } evi_sock_rw_args_t;
 typedef struct { ev_addrinfo_t *pres; const char *name; ev_addrinfo_flags_t flags; } evi_getaddrinfo_args_t;
 
 typedef struct { char **pres; ev_path_type_t type; } evi_getpath_args_t;
@@ -597,6 +598,16 @@ static int evi_accept_worker(void *pargs) {
 	evi_accept_args_t args = *(evi_accept_args_t*)pargs;
 	free(pargs);
 	return evi_sync_accept(args.pres, args.paddr, args.pport, args.server);
+}
+static int evi_recv_worker(void *pargs) {
+	evi_sock_rw_args_t args = *(evi_sock_rw_args_t*)pargs;
+	free(pargs);
+	return evi_sync_recv(args.sock, args.buff, args.pn);
+}
+static int evi_send_worker(void *pargs) {
+	evi_sock_rw_args_t args = *(evi_sock_rw_args_t*)pargs;
+	free(pargs);
+	return evi_sync_send(args.sock, args.buff, args.pn);
 }
 static int evi_getaddrinfo_worker(void *pargs) {
 	evi_getaddrinfo_args_t args = *(evi_getaddrinfo_args_t*)pargs;
@@ -695,7 +706,7 @@ ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t dir, char **pname) {
 	return ev_exec(ev, udata, evi_readdir_worker, pargs, false);
 }
 
-ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return EV_ENOMEM;
 
@@ -705,7 +716,7 @@ ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_a
 	pargs->port = port;
 	return ev_exec(ev, udata, evi_connect_worker, pargs, false);
 }
-ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	evi_sock_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return EV_ENOMEM;
 
@@ -715,7 +726,7 @@ ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr
 	pargs->port = port;
 	return ev_exec(ev, udata, evi_bind_worker, pargs, false);
 }
-ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
+ev_code_t ev_accept(ev_t ev, void *udata, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
 		return evi_uring_accept(ev->uring, udata, pres, paddr, pport, server);
@@ -730,6 +741,35 @@ ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint1
 		return ev_exec(ev, udata, evi_accept_worker, pargs, false);
 	#endif
 }
+ev_code_t ev_recv(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn) {
+	#ifdef EV_USE_URING
+		ev_begin(ev);
+		return evi_uring_recv(ev->uring, udata, sock, buff, pn);
+	#else
+		evi_sock_rw_args_t *pargs = malloc(sizeof *pargs);
+		if (!pargs) return EV_ENOMEM;
+
+		pargs->sock = sock;
+		pargs->buff = buff;
+		pargs->pn = pn;
+		return ev_exec(ev, udata, evi_recv_worker, pargs, false);
+	#endif
+}
+ev_code_t ev_send(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn) {
+	#ifdef EV_USE_URING
+		ev_begin(ev);
+		return evi_uring_send(ev->uring, udata, sock, buff, pn);
+	#else
+		evi_sock_rw_args_t *pargs = malloc(sizeof *pargs);
+		if (!pargs) return EV_ENOMEM;
+
+		pargs->sock = sock;
+		pargs->buff = buff;
+		pargs->pn = pn;
+		return ev_exec(ev, udata, evi_send_worker, pargs, false);
+	#endif
+}
+
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	evi_getaddrinfo_args_t *pargs = malloc(sizeof *pargs);
 	if (!pargs) return EV_ENOMEM;

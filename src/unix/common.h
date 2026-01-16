@@ -1,3 +1,4 @@
+#include <stddef.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
@@ -14,6 +15,13 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+
+static ev_socket_t evi_unix_mksock(int fd) {
+	return (void*)(size_t)fd;
+}
+static int evi_unix_sock(ev_socket_t fd) {
+	return (int)(size_t)fd;
+}
 
 #ifdef EV_USE_LINUX
 	static ev_fd_t evi_unix_mkfd(int fd) {

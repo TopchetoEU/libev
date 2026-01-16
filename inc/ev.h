@@ -13,6 +13,7 @@ typedef struct ev *ev_t;
 typedef int (*ev_worker_t)(void *pargs);
 
 typedef struct ev_fd *ev_fd_t;
+typedef struct ev_socket *ev_socket_t;
 typedef struct ev_dir *ev_dir_t;
 
 typedef enum {
@@ -198,14 +199,20 @@ ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_code_t ev_bind(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to socket() + connect()
-ev_code_t ev_connect(ev_t ev, void *udata, ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to posix's accept
-ev_code_t ev_accept(ev_t ev, void *udata, ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server);
+ev_code_t ev_accept(ev_t ev, void *udata, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server);
+// Equivalent to posix's recv
+ev_code_t ev_recv(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
+// Equivalent to posix's send
+ev_code_t ev_send(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
+// Equivalent to posix's close (but for sockets)
+void ev_closesock(ev_t ev, ev_socket_t sock);
+
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
-
 // Gets a malloc'd string, representing the requested path
 ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
 

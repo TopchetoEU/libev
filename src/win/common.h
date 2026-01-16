@@ -10,17 +10,6 @@
 #include <winsock2.h>
 #include <ws2ipdef.h>
 
-struct ev_fd {
-	enum {
-		EVI_WIN_FILE,
-		EVI_WIN_SOCK,
-	} kind;
-	union {
-		HANDLE file;
-		SOCKET socket;
-	};
-};
-
 struct ev_dir {
 	HANDLE hnd;
 	bool done;

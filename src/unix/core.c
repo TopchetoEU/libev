@@ -1,3 +1,4 @@
+#include <sys/types.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
@@ -20,7 +21,7 @@
 
 struct ev_dir {};
 
-static int evi_unix_mksock(ev_proto_t proto, ev_addr_type_t type) {
+static int evi_unix_new_sock(ev_proto_t proto, ev_addr_type_t type) {
 	return socket(
 		type == EV_ADDR_IPV4 ? AF_INET : AF_INET6,
 		proto == EV_PROTO_UDP ? SOCK_DGRAM : SOCK_STREAM,
@@ -69,7 +70,16 @@ static ev_code_t evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
 static ev_code_t evi_sync_read(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
-	ssize_t res = pread(evi_unix_fd(fd), buff, *n, offset);
+	// Since our API doesn't work with seek pointers (as uring warrants that),
+	// but pread/pwrite always seek, we need to have a special case for TTYs and pipes
+	ssize_t res;
+	if (offset == 0 && lseek(evi_unix_fd(fd), 0, SEEK_CUR) < 0) {
+		res = read(evi_unix_fd(fd), buff, *n);
+	}
+	else {
+		res = pread(evi_unix_fd(fd), buff, *n, offset);
+	}
+
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
@@ -77,7 +87,14 @@ static ev_code_t evi_sync_read(ev_fd_t fd, char *buff, size_t *n, size_t offset)
 static ev_code_t evi_sync_write(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
-	ssize_t res = pwrite(evi_unix_fd(fd), buff, *n, offset);
+	ssize_t res;
+	if (offset == 0 && lseek(evi_unix_fd(fd), 0, SEEK_CUR) < 0) {
+		res = write(evi_unix_fd(fd), buff, *n);
+	}
+	else {
+		res = pwrite(evi_unix_fd(fd), buff, *n, offset);
+	}
+
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
@@ -133,8 +150,8 @@ void ev_closedir(ev_t loop, ev_dir_t dir) {
 	}
 }
 
-static ev_code_t evi_sync_connect(ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
-	int sock = evi_unix_mksock(proto, addr.type);
+static ev_code_t evi_sync_connect(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+	int sock = evi_unix_new_sock(proto, addr.type);
 	if (sock < 0) return evi_unix_conv_errno(errno);
 
 	struct sockaddr_storage arg_addr;
@@ -142,11 +159,11 @@ static ev_code_t evi_sync_connect(ev_fd_t *pres, ev_proto_t proto, ev_addr_t add
 
 	if (connect(sock, (void*)&arg_addr, len) < 0) return evi_unix_conv_errno(errno);
 
-	*pres = evi_unix_mkfd(sock);
+	*pres = evi_unix_mksock(sock);
 	return EV_OK;
 }
-static ev_code_t evi_sync_bind(ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
-	int sock = evi_unix_mksock(proto, addr.type);
+static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+	int sock = evi_unix_new_sock(proto, addr.type);
 	if (sock < 0) return evi_unix_conv_errno(errno);
 
 	struct sockaddr_storage arg_addr;
@@ -154,10 +171,10 @@ static ev_code_t evi_sync_bind(ev_fd_t *pres, ev_proto_t proto, ev_addr_t addr, 
 
 	if (bind(sock, (void*)&arg_addr, len) < 0) return evi_unix_conv_errno(errno);
 
-	*pres = evi_unix_mkfd(sock);
+	*pres = evi_unix_mksock(sock);
 	return EV_OK;
 }
-static ev_code_t evi_sync_accept(ev_fd_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_fd_t server) {
+static ev_code_t evi_sync_accept(ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
 	struct sockaddr_storage addr;
 	socklen_t addr_len;
 
@@ -165,7 +182,21 @@ static ev_code_t evi_sync_accept(ev_fd_t *pres, ev_addr_t *paddr, uint16_t *ppor
 	if (!client) return evi_unix_conv_errno(errno);
 
 	evi_unix_conv_sockaddr(&addr, paddr, pport);
-	*pres = evi_unix_mkfd(client);
+	*pres = evi_unix_mksock(client);
+	return EV_OK;
+}
+static ev_code_t evi_sync_recv(ev_socket_t sock, char *buff, size_t *pn) {
+	ssize_t n = recv(evi_unix_sock(sock), buff, *pn, 0);
+	if (n < 0) return evi_unix_conv_errno(errno);
+
+	*pn = n;
+	return EV_OK;
+}
+static ev_code_t evi_sync_send(ev_socket_t sock, char *buff, size_t *pn) {
+	ssize_t n = send(evi_unix_sock(sock), buff, *pn, 0);
+	if (n < 0) return evi_unix_conv_errno(errno);
+
+	*pn = n;
 	return EV_OK;
 }
 static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
@@ -230,6 +261,9 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 
 	*pres = res;
 	return EV_OK;
+}
+void ev_closesock(ev_t ev, ev_socket_t sock) {
+	ev_close(ev, evi_unix_mkfd(evi_unix_sock(sock)));
 }
 
 // static const char =
