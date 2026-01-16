@@ -41,7 +41,7 @@ struct ev {
 
 	ev_fd_t in, out, err;
 
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		struct ev_pool_worker *next_worker;
 	#endif
 
@@ -195,14 +195,14 @@ static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 	msg->err = err;
 	ev->next_msg = msg;
 
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		ev_cond_broadcast(ev->has_msg_cond);
 	#endif
 
 	return EV_OK;
 }
 
-#ifdef EV_USE_PTHREAD
+#ifdef EV_USE_MULTITHREAD
 	typedef struct ev_pool_worker {
 		struct ev_pool_worker *next;
 		ev_t ev;
@@ -228,8 +228,7 @@ static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 		ev_mutex_lock(ev->lock);
 
 		while (true) {
-			if (worker->kys) break;
-			if (worker->worker) {
+			while (worker->worker && !worker->kys) {
 				void *udata = worker->udata;
 				ev_worker_t cb = worker->worker;
 				void *args = worker->args;
@@ -240,10 +239,9 @@ static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 				ev_mutex_unlock(ev->lock);
 				ev_code_t code = cb(args);
 				ev_mutex_lock(ev->lock);
-				if (code != EV_EINTR) {
-					evi_push(ev, udata, code);
-				}
+				evi_push(ev, udata, code);
 			}
+			if (worker->kys) break;
 
 			ev_cond_wait(worker->cond, ev->lock);
 		}
@@ -356,7 +354,7 @@ ev_t ev_init() {
 
 	if (evi_stdio_init(&ev->in, &ev->out, &ev->err) < 0) goto fail_stdio;
 
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		ev_mutex_new(ev->lock);
 		ev_cond_new(ev->has_msg_cond);
 
@@ -371,7 +369,7 @@ ev_t ev_init() {
 
 	return ev;
 fail_async:
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		ev_cond_free(ev->has_msg_cond);
 		ev_mutex_free(ev->lock);
 	#endif
@@ -391,7 +389,7 @@ void ev_free(ev_t ev) {
 		evi_win_free();
 	#endif
 
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		while (ev->next_worker) {
 			ev_pool_worker_t curr = ev->next_worker;
 			ev->next_worker = curr->next;
@@ -438,7 +436,7 @@ ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 	ev_mutex_lock(ev->lock);
 
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		if (!sync) {
 			for (ev_pool_worker_t it = ev->next_worker; it; it = it->next) {
 				if (!it->worker) {
@@ -480,15 +478,15 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 		}
 		else fallback: {
 	#endif
+			ev->active_n++;
 			int code = worker(pargs);
 			if (code == EV_ECANCELED) return EV_ECANCELED;
 
 			int errcode = evi_push(ev, udata, code);
 
-			ev->active_n++;
 			ev_mutex_unlock(ev->lock);
 			return errcode;
-	#ifdef EV_USE_PTHREAD
+	#ifdef EV_USE_MULTITHREAD
 		}
 	#endif
 }

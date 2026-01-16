@@ -10,7 +10,7 @@
 		#define EV_USE_UNIX
 	#endif
 
-	#if !defined __linux
+	#if defined __linux
 		#ifndef EV_USE_LINUX
 			#define EV_USE_LINUX
 		#endif
@@ -59,7 +59,7 @@
 
 // 3. Setup other defines, if they depend on above config
 
-#if defined EV_USE_URING
+#if defined EV_USE_LINUX
 	#define _GNU_SOURCE
 #endif
 
