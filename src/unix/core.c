@@ -1,4 +1,3 @@
-#include <sys/types.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
@@ -166,6 +165,11 @@ static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t ad
 	int sock = evi_unix_new_sock(proto, addr.type);
 	if (sock < 0) return evi_unix_conv_errno(errno);
 
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &(int) { 1 }, sizeof(int)) < 0) {
+		close(sock);
+		return evi_unix_conv_errno(errno);
+	}
+
 	struct sockaddr_storage arg_addr;
 	int len = evi_unix_conv_addr(addr, port, &arg_addr);
 
@@ -182,8 +186,8 @@ static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t ad
 	return EV_OK;
 }
 static ev_code_t evi_sync_accept(ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
-	struct sockaddr_storage addr;
-	socklen_t addr_len;
+	struct sockaddr_storage addr = {};
+	socklen_t addr_len = sizeof addr;
 
 	int client = accept((int)(size_t)server, (void*)&addr, &addr_len);
 	if (client < 0) return evi_unix_conv_errno(errno);
@@ -278,10 +282,10 @@ void ev_closesock(ev_t ev, ev_socket_t sock) {
 static char *evi_unix_gethome(const char *suffix) {
 	struct passwd resbuf[1];
 	struct passwd *ppwd;
-	char *buff = malloc(1024);
+	char *buff = malloc(PATH_MAX);
 	if (!buff) return NULL;
 
-	size_t buffn = 1024;
+	size_t buffn = PATH_MAX;
 
 	while (true) {
 		getpwuid_r(getuid(), resbuf, buff, buffn, &ppwd);
@@ -371,12 +375,12 @@ static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
 			return EV_OK;
 		}
 		case EV_PATH_CWD: {
-			char *buff = malloc(1024);
-			size_t buffn = 1024;
+			char *buff = malloc(PATH_MAX);
+			size_t buffn = PATH_MAX;
 			if (!buff) return EV_ENOMEM;
 
 			while (true) {
-				if (!getcwd(buff, buffn) == 0) break;
+				if (!getcwd(buff, buffn)) break;
 				if (errno != ERANGE) {
 					free(buff);
 					return evi_unix_conv_errno(errno);

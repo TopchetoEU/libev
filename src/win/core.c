@@ -224,6 +224,11 @@ static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t ad
 	SOCKET sock = evi_win_mksock(proto, addr.type);
 	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
 
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &(int) { 1 }, sizeof(int)) < 0) {
+		close(sock);
+		return evi_unix_conv_errno(errno);
+	}
+
 	struct sockaddr_storage arg_addr;
 	int len = evi_win_conv_addr(addr, port, &arg_addr);
 
@@ -254,8 +259,8 @@ static ev_code_t evi_sync_send(ev_socket_t sock, char *buff, size_t *pn) {
 	return EV_OK;
 }
 static ev_code_t evi_sync_accept(ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
-	struct sockaddr_storage addr;
-	int addr_len;
+	struct sockaddr_storage addr = {};
+	socklen_t addr_len = sizeof addr;
 
 	SOCKET client = accept((SOCKET)server, (void*)&addr, &addr_len);
 	if (!client) return evi_win_conv_errno(WSAGetLastError());
