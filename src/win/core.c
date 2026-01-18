@@ -224,9 +224,9 @@ static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t ad
 	SOCKET sock = evi_win_mksock(proto, addr.type);
 	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
 
-	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &(int) { 1 }, sizeof(int)) < 0) {
-		close(sock);
-		return evi_unix_conv_errno(errno);
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*)&(int) { 1 }, sizeof(int)) < 0) {
+		closesocket(sock);
+		return evi_win_conv_errno(WSAGetLastError());
 	}
 
 	struct sockaddr_storage arg_addr;
