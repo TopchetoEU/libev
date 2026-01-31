@@ -1,20 +1,42 @@
-override CCFLAGS += -Iinc
-override CCFLAGS += -Wall
-override CCFLAGS += -Wextra
-override CCFLAGS += -fPIC
+override CCFLAGS += -Iinc -Wall -Wextra -fPIC
 
-override LDFLAGS += $(shell pkg-config --libs liburing)
-override CCFLAGS += $(shell pkg-config --cflags liburing)
+HOST ?= $(shell uname)
+TARGET ?= $(shell uname)
+LIBPREFIX ?= bin/$(TARGET)/lib
+
+TARGET_CC := $(CROSS_COMPILE)$(CC)
+TARGET_AR := $(CROSS_COMPILE)$(AR)
+
+ifeq ($(TARGET),Windows)
+	override LDFLAGS += -lws2_32
+	LIBPREFIX ?= bin/Windows/
+else
+	ifeq ($(TARGET),Linux)
+		override CCFLAGS += $(shell pkg-config --cflags liburing)
+		override LDFLAGS += $(shell pkg-config --libs liburing)
+	endif
+
+	override CCFLAGS_DYN += $(shell pkg-config --cflags libffi)
+	override LDFLAGS_DYN += $(shell pkg-config --libs libffi)
+endif
 
 NAME ?= ev
 
-SHARED := bin/lib$(NAME).so
-STATIC := bin/lib$(NAME).a
-OBJECT := bin/lib$(NAME).o
+SHARED := $(LIBPREFIX)$(NAME)
+STATIC := $(LIBPREFIX)$(NAME).a
+OBJECT := $(LIBPREFIX)$(NAME).o
 
-SHARED_DYN := bin/lib$(NAME)-dyn.so
-STATIC_DYN := bin/lib$(NAME)-dyn.a
-OBJECT_DYN := bin/lib$(NAME)-dyn.o
+SHARED_DYN := $(LIBPREFIX)$(NAME)-dyn
+STATIC_DYN := $(LIBPREFIX)$(NAME)-dyn.a
+OBJECT_DYN := $(LIBPREFIX)$(NAME)-dyn.o
+
+ifeq ($(TARGET),Windows)
+	SHARED := $(SHARED).dll
+	SHARED_DYN := $(SHARED_DYN).dll
+else
+	SHARED := $(SHARED).so
+	SHARED_DYN := $(SHARED_DYN).so
+endif
 
 ifeq ($(DEBUG),yes)
 	override CCFLAGS += -g
@@ -31,20 +53,20 @@ sources:
 flags:
 	echo $(CCFLAGS)
 
-$(SHARED): $(OBJECT) | bin/
-	$(CC) $(CCFLAGS) $(LDFLAGS) -shared $^ -o $@
+$(SHARED): $(OBJECT) | bin/$(TARGET)/
+	$(TARGET_CC) $(CCFLAGS) -shared $^ -o $@ $(LDFLAGS)
 
-$(SHARED_DYN): $(OBJECT_DYN) | bin/
-	$(CC) $(CCFLAGS) $(LDFLAGS) -lffi -shared $^ -o $@
+$(SHARED_DYN): $(OBJECT_DYN) | bin/$(TARGET)/
+	$(TARGET_CC) $(CCFLAGS) $(CCFLAGS_DYN) -shared $^ -o $@ $(LDFLAGS) $(LDFLAGS_DYN)
 
-%.a: %.o | bin/
-	$(AR) rcs $@ $^
+%.a: %.o | bin/$(TARGET)/
+	$(TARGET_AR) rcs $@ $^
 
-$(OBJECT): src/ev.c | bin/
-	$(CC) $(CCFLAGS) -c $^ -o $@
+$(LIBPREFIX)ev.o: src/ev.c | bin/$(TARGET)/
+	$(TARGET_CC) $(CCFLAGS) -c $^ -o $@
 
-$(OBJECT_DYN): src/ev-dyn.c | bin/
-	$(CC) $(CCFLAGS) -c $^ -o $@
+$(LIBPREFIX)ev-dyn.o: src/ev-dyn.c | bin/$(TARGET)/
+	$(TARGET_CC) $(CCFLAGS) $(CCFLAGS_DYN) -c $^ -o $@
 
-bin/:
-	mkdir -p bin
+%/:
+	mkdir -p $@
