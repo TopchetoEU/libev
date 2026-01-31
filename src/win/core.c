@@ -104,6 +104,10 @@ static ev_code_t evi_sync_write(ev_fd_t fd, char *buff, size_t *n, size_t offset
 	*n = out_n;
 	return EV_OK;
 }
+static ev_code_t evi_sync_sync(ev_fd_t fd) {
+	if (!FlushFileBuffers(fd)) return evi_win_conv_errno(GetLastError());
+	return EV_OK;
+}
 static ev_code_t evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
 	BY_HANDLE_FILE_INFORMATION info;
 	if (!GetFileInformationByHandle(fd, &info)) return evi_win_conv_errno(GetLastError());

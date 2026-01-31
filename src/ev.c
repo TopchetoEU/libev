@@ -534,6 +534,7 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **puda
 
 typedef struct { ev_fd_t *pres; const char *path; ev_open_flags_t flags; int mode; } evi_open_args_t;
 typedef struct { ev_fd_t fd; char *buff; size_t *n; size_t offset; } evi_rw_args_t;
+typedef struct { ev_fd_t fd; } evi_sync_args_t;
 typedef struct { ev_fd_t fd; ev_stat_t *buff; } evi_stat_args_t;
 
 typedef struct { const char *path; int mode; } evi_mkdir_args_t;
@@ -561,6 +562,11 @@ static int evi_write_worker(void *pargs) {
 	evi_rw_args_t args = *(evi_rw_args_t*)pargs;
 	free(pargs);
 	return evi_sync_write(args.fd, args.buff, args.n, args.offset);
+}
+static int evi_sync_worker(void *pargs) {
+	evi_sync_args_t args = *(evi_sync_args_t*)pargs;
+	free(pargs);
+	return evi_sync_sync(args.fd);
 }
 static int evi_stat_worker(void *pargs) {
 	evi_stat_args_t args = *(evi_stat_args_t*)pargs;
@@ -665,6 +671,18 @@ ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size
 		pargs->n = n;
 		pargs->offset = offset;
 		return ev_exec(ev, udata, evi_write_worker, pargs, false);
+	#endif
+}
+ev_code_t ev_sync(ev_t ev, void *udata, ev_fd_t fd) {
+	#ifdef EV_USE_URING
+		ev_begin(ev);
+		return evi_uring_sync(ev->uring, udata, fd);
+	#else
+		evi_sync_args_t *pargs = malloc(sizeof *pargs);
+		if (!pargs) return EV_ENOMEM;
+
+		pargs->fd = fd;
+		return ev_exec(ev, udata, evi_sync_worker, pargs, false);
 	#endif
 }
 ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff) {

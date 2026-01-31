@@ -181,6 +181,8 @@ ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open
 ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
 // Equivalent to posix's pwrite
 ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+// Equivalent to posix's sync
+ev_code_t ev_sync(ev_t ev, void *udata, ev_fd_t fd);
 // Equivalent to posix's stat
 ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
 // Equivalent to posix's fstat

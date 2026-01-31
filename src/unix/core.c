@@ -98,6 +98,11 @@ static ev_code_t evi_sync_write(ev_fd_t fd, char *buff, size_t *n, size_t offset
 	*n = res;
 	return EV_OK;
 }
+static ev_code_t evi_sync_sync(ev_fd_t fd) {
+	if (!evi_unix_isfd(fd)) return EV_EBADF;
+
+	return evi_unix_conv_errno(fsync(evi_unix_fd(fd)));
+}
 void ev_close(ev_t loop, ev_fd_t fd) {
 	(void)loop;
 

@@ -111,6 +111,14 @@ static ev_code_t evi_uring_write(ev_uring_t uring, void *ticket, ev_fd_t fd, cha
 	io_uring_submit(&uring->ctx);
 	return EV_OK;
 }
+static ev_code_t evi_uring_sync(ev_uring_t uring, void *ticket, ev_fd_t fd) {
+	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+
+	io_uring_prep_fsync(evi_uring_get_sqe(uring, udata), evi_unix_fd(fd), 0);
+	io_uring_submit(&uring->ctx);
+	return EV_OK;
+}
 static ev_code_t evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_stat_t *pres) {
 	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_STAT, ticket);
 	if (!udata) return EV_ENOMEM;
