@@ -437,7 +437,7 @@ ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 }
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 	ev_mutex_lock(ev->lock);
-	(void)sync;l
+	(void)sync;
 
 	#ifdef EV_USE_MULTITHREAD
 		if (!sync) {
