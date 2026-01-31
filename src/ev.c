@@ -17,6 +17,8 @@
 	#include "./unix/core.c"
 #elif defined EV_USE_WIN32
 	#include "./win/core.c"
+#else
+	#error Either unix or windows must be enabled
 #endif
 
 #ifdef EV_USE_URING
@@ -435,6 +437,7 @@ ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 }
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 	ev_mutex_lock(ev->lock);
+	(void)sync;l
 
 	#ifdef EV_USE_MULTITHREAD
 		if (!sync) {

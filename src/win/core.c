@@ -154,6 +154,7 @@ static ev_code_t evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
 	return EV_OK;
 }
 void ev_close(ev_t ev, ev_fd_t fd) {
+	(void)ev;
 	CloseHandle(fd);
 }
 
@@ -430,5 +431,8 @@ static int evi_stdio_init(ev_fd_t *in, ev_fd_t *out, ev_fd_t *err) {
 	return EV_OK;
 }
 static int evi_stdio_free(ev_fd_t in, ev_fd_t out, ev_fd_t err) {
+	(void)in;
+	(void)out;
+	(void)err;
 	return EV_OK;
 }
