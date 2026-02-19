@@ -140,6 +140,7 @@ static int evi_unix_conv_open_flags(ev_open_flags_t flags) {
 	if (flags & EV_OPEN_CREATE) res |= O_CREAT;
 	if (flags & EV_OPEN_TRUNC) res |= O_TRUNC;
 	if (flags & EV_OPEN_DIRECT) res |= O_SYNC;
+	if (!(flags & EV_OPEN_SHARED)) res |= O_CLOEXEC;
 
 	return res;
 }

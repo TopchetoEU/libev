@@ -131,6 +131,7 @@ static ev_code_t evi_uring_stat(ev_uring_t uring, void *ticket, ev_fd_t fd, ev_s
 	mask |= STATX_SIZE | STATX_BLOCKS;
 	mask |= STATX_INO | STATX_NLINK | STATX_MNT_ID | STATX_MNT_ID_UNIQUE;
 
+	assert(!evi_unix_isfd(fd));
 	io_uring_prep_statx(evi_uring_get_sqe(uring, udata), evi_unix_fd(fd), "", AT_EMPTY_PATH, mask, &udata->stat.buff);
 	io_uring_submit(&uring->ctx);
 	return EV_OK;

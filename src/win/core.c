@@ -39,6 +39,8 @@ static ev_code_t evi_sync_open(ev_fd_t *pres, const char *path, ev_open_flags_t 
 	DWORD access_others = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 	DWORD create_mode = 0;
 	DWORD res_flags = 0;
+	SECURITY_ATTRIBUTES sec_attribs = { 0 };
+	sec_attribs.nLength = sizeof sec_attribs;
 
 	if (flags & EV_OPEN_APPEND) {
 		flags |= EV_OPEN_WRITE;
@@ -66,6 +68,10 @@ static ev_code_t evi_sync_open(ev_fd_t *pres, const char *path, ev_open_flags_t 
 
 	if (flags & EV_OPEN_DIRECT) {
 		res_flags |= FILE_FLAG_WRITE_THROUGH;
+	}
+
+	if (flags & EV_OPEN_SHARED) {
+		sec_attribs.bInheritHandle = true;
 	}
 
 	HANDLE fd = CreateFile(path, access, access_others, NULL, create_mode, FILE_ATTRIBUTE_NORMAL | res_flags, NULL);

@@ -32,6 +32,9 @@ typedef enum {
 	EV_OPEN_TRUNC = 16,
 	// Opens the file in direct mode
 	EV_OPEN_DIRECT = 32,
+	// Keeps the file open after an exec() call
+	// By default, all files, not marked with this, are closed
+	EV_OPEN_SHARED = 64,
 } ev_open_flags_t;
 
 typedef enum {
