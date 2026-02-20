@@ -551,6 +551,17 @@ typedef struct { ev_addrinfo_t *pres; const char *name; ev_addrinfo_flags_t flag
 
 typedef struct { char **pres; ev_path_type_t type; } evi_getpath_args_t;
 
+typedef struct {
+	ev_proc_t *pres;
+	const char **argv;
+	const char **env;
+	const char *cwd;
+	ev_spawn_stdio_flags_t in_flags, out_flags, err_flags;
+	ev_fd_t *pin, *pout, *perr;
+} evi_spawn_args_t;
+typedef struct { int *psig; int *pcode; ev_proc_t proc; } evi_wait_args_t;
+typedef struct { ev_proc_t proc; } evi_disown_args_t;
+
 static int evi_open_worker(void *pargs) {
 	evi_open_args_t args = *(evi_open_args_t*)pargs;
 	free(pargs);
@@ -629,6 +640,28 @@ static int evi_getpath_worker(void *pargs) {
 	free(pargs);
 	return evi_sync_getpath(args.pres, args.type);
 	// return 0;
+}
+
+static int evi_spawn_worker(void *pargs) {
+	evi_spawn_args_t args = *(evi_spawn_args_t*)pargs;
+	free(pargs);
+	return evi_sync_spawn(
+		args.pres,
+		args.argv,
+		args.env,
+		args.cwd,
+		args.in_flags,
+		args.pin,
+		args.out_flags,
+		args.pout,
+		args.err_flags,
+		args.perr
+	);
+}
+static int evi_wait_worker(void *pargs) {
+	evi_wait_args_t args = *(evi_wait_args_t*)pargs;
+	free(pargs);
+	return evi_sync_wait(args.proc, args.psig, args.pcode);
 }
 
 ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
@@ -809,6 +842,44 @@ ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type) {
 	pargs->pres = pres;
 	pargs->type = type;
 	return ev_exec(ev, udata, evi_getpath_worker, pargs, false);
+}
+
+ev_code_t ev_spawn(
+	ev_t ev, void *udata, ev_proc_t *pres,
+	const char **argv, const char **env,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_fd_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_fd_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_fd_t *perr
+) {
+	evi_spawn_args_t *pargs = malloc(sizeof *pargs);
+	if (!pargs) return EV_ENOMEM;
+
+	pargs->pres = pres;
+	pargs->argv = argv;
+	pargs->env = env;
+	pargs->cwd = cwd;
+	pargs->in_flags = in_flags;
+	pargs->out_flags = out_flags;
+	pargs->err_flags = err_flags;
+	pargs->pin = pin;
+	pargs->pout = pout;
+	pargs->perr = perr;
+	return ev_exec(ev, udata, evi_spawn_worker, pargs, false);
+}
+ev_code_t ev_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode) {
+	#ifdef EV_USE_URING
+		ev_begin(ev);
+		return evi_uring_wait(ev->uring, udata, proc, psig, pcode);
+	#else
+		evi_wait_args_t *pargs = malloc(sizeof *pargs);
+		if (!pargs) return EV_ENOMEM;
+
+		pargs->psig = psig;
+		pargs->pcode = pcode;
+		pargs->proc = proc;
+		return ev_exec(ev, udata, evi_wait_worker, pargs, false);
+	#endif
 }
 
 ev_fd_t ev_stdin(ev_t ev) {

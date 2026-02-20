@@ -9,9 +9,12 @@ ffi.cdef [[
 	int printf(const char *fmt, ...);
 ]];
 
-local libev = ffi.load "./bin/libev.so";
+local libev = ffi.load "./bin/Linux/libev.so";
 ffi.cdef [[
 #line 13
+
+void *malloc(size_t n);
+void free(void *ptr);
 
 typedef struct ev *ev_t;
 
@@ -21,6 +24,7 @@ typedef int (*ev_worker_t)(void *pargs);
 typedef struct ev_fd *ev_fd_t;
 typedef struct ev_socket *ev_socket_t;
 typedef struct ev_dir *ev_dir_t;
+typedef struct ev_proc *ev_proc_t;
 
 typedef enum {
 	// The file will be usable only for statting (by default allowed)
@@ -38,7 +42,19 @@ typedef enum {
 	EV_OPEN_TRUNC = 16,
 	// Opens the file in direct mode
 	EV_OPEN_DIRECT = 32,
+	// Keeps the file open after an exec() call
+	// By default, all files, not marked with this, are closed
+	EV_OPEN_SHARED = 64,
 } ev_open_flags_t;
+
+typedef enum {
+	// Use parent's stdio handle (default)
+	EV_SPAWN_STD_INHERIT,
+	// Use file descriptor, stored in the ev_fd_t* argument
+	EV_SPAWN_STD_DUP,
+	// Create a dummy file descriptor (pipe), store it in the ev_fd_t* argument and use that for the stdio handle
+	EV_SPAWN_STD_PIPE,
+} ev_spawn_stdio_flags_t;
 
 typedef enum {
 	EV_PATH_HOME,
@@ -187,6 +203,8 @@ ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open
 ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
 // Equivalent to posix's pwrite
 ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+// Equivalent to posix's sync
+ev_code_t ev_sync(ev_t ev, void *udata, ev_fd_t fd);
 // Equivalent to posix's stat
 ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
 // Equivalent to posix's fstat
@@ -205,7 +223,7 @@ ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 void ev_closedir(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
 // Equivalent to socket() + connect()
 ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
 // Equivalent to posix's accept
@@ -221,9 +239,23 @@ void ev_closesock(ev_t ev, ev_socket_t sock);
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 // Gets a malloc'd string, representing the requested path
 ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
+
+// Equivalent to posix's fork then exec
+ev_code_t ev_spawn(
+	ev_t ev, void *udata, ev_proc_t *pres,
+	const char **argv, const char **env,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_fd_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_fd_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_fd_t *perr
+);
+// Equivalent to posix's waitpid
+// psig is set to the signal that terminated the child, or -1 if not terminated by a signal
+// pcode is set to the exit code of the app, or -1 if child did not exit with a code
+ev_code_t ev_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
 ]];
 
-local libev_dyn = ffi.load "./bin/libev-dyn.so";
+local libev_dyn = ffi.load "./bin/Linux/libev-dyn.so";
 ffi.cdef [[
 // A simple wrapper around libffi, so that ev_exec can be used by dynamic languages
 
@@ -391,6 +423,80 @@ function ev.stat(cb, fd)
 	end
 
 	return call_wrap(libev.ev_stat, handle, fd, pbuff);
+end
+
+function ev.spawn(cb, opts)
+	local pres = ffi.new "ev_proc_t[1]";
+
+	local function fix_stdfd(fd)
+		if fd == "inherit" then
+			return 0, nil;
+		elseif fd == "pipe" then
+			return 2, ffi.new "ev_fd_t[1]";
+		else
+			return 1, ffi.new("ev_fd_t[1]", fd);
+		end
+	end
+
+	local in_flags, pin = fix_stdfd(opts.stdin);
+	local out_flags, pout = fix_stdfd(opts.stdout);
+	local err_flags, perr = fix_stdfd(opts.stderr);
+
+	local function stddup(str)
+		local res = libc.malloc(#str + 1);
+		ffi.copy(res, str);
+		return res;
+	end
+
+	local argv = ffi.cast("const char**", libc.malloc(ffi.sizeof("const char**", #opts.argv + 1)));
+	for i = 1, #opts.argv do
+		argv[i - 1] = stddup(opts.argv[i]);
+	end
+
+	local env_key_n = 0;
+
+	for _ in pairs(opts.env) do
+		env_key_n = env_key_n + 1;
+	end
+
+	local env = ffi.cast("const char**", libc.malloc(ffi.sizeof("const char**", #opts.env + env_key_n * 2 + 1)));
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+
+		local stdin, stdout, stderr;
+
+		if in_flags == 2 and pin then stdin = pin[0] end
+		if out_flags == 2 and pout then stdout = pout[0] end
+		if err_flags == 2 and perr then stderr = perr[0] end
+
+		return invoke(cb, pres[0], stdin, stdout, stderr);
+	end
+
+	for i = 1, #opts.env do
+		env[(i - 1) * 2] = stddup(opts.env[i][1]);
+		env[(i - 1) * 2 + 1] = stddup(opts.env[i][2]);
+	end
+
+	local i = 0;
+	for k, v in pairs(opts.env) do
+		env[#opts.env * 2 + i * 2] = stddup(k);
+		env[#opts.env * 2 + i * 2 + 1] = stddup(v);
+		i = i + 1;
+	end
+
+	return call_wrap(libev.ev_spawn, handle, pres, argv, env, opts.cwd, in_flags, pin, out_flags, pout, err_flags, perr);
+end
+function ev.wait(cb, proc)
+	local pcode = ffi.new "int[1]";
+	local psig = ffi.new "int[1]";
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, tonumber(pcode[0]), tonumber(psig[0]));
+	end
+
+	return call_wrap(libev.ev_wait, handle, proc, pcode, psig);
 end
 
 function ev.mkdir(cb, path, mode)
@@ -592,7 +698,7 @@ local function syncify(func)
 	return function (...)
 		local ok, err = func(coroutine.running(), ...);
 		if not ok then return nil, err end
-		return hnd(coroutine.yield());
+		return coroutine.yield();
 	end
 end
 
@@ -619,6 +725,9 @@ local evs = {
 
 	getaddrinfo = syncify(ev.getaddrinfo),
 	getpath = syncify(ev.getpath),
+
+	spawn = syncify(ev.spawn),
+	wait = syncify(ev.wait),
 };
 
 local function run()
@@ -724,9 +833,9 @@ local function netcat(url)
 	evs.closesock(sock);
 end
 
-fork(netcat, "www.google.com");
-fork(netcat, "www.topcheto.eu");
-fork(netcat, "www.dir.bg");
+-- fork(netcat, "www.google.com");
+-- fork(netcat, "www.topcheto.eu");
+-- fork(netcat, "www.dir.bg");
 
 -- fork(function ()
 -- 	netcat "www.topcheto.eu";
@@ -736,20 +845,44 @@ fork(netcat, "www.dir.bg");
 
 local sig_printf = assert(ev.mksig(libc.printf, "i*ii"));
 
-fork(function ()
-	sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
-	coroutine.yield();
-	sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
-	coroutine.yield();
-end);
+-- fork(function ()
+-- 	sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
+-- 	coroutine.yield();
+-- 	sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
+-- 	coroutine.yield();
+-- end);
+
+-- fork(function ()
+-- 	local base = monotime();
+
+-- 	for i = 1, 20 do
+-- 		sleep_until(base + i * .01);
+-- 		print("====================> MS " .. i * 10);
+-- 	end
+-- end);
 
 fork(function ()
-	local base = monotime();
+	local proc, proc_in, proc_out = assert(evs.spawn {
+		stdin = "pipe",
+		stdout = "pipe",
+		stderr = "inherit",
+		argv = { "/bin/sort", "-" },
+		env = {},
+	});
 
-	for i = 1, 50 do
-		sleep_until(base + i * .01);
-		print("====================> MS " .. i * 10);
+	assert(evs.write(proc_in, 0, "342\n"));
+	assert(evs.write(proc_in, 0, "12321\n"));
+	assert(evs.write(proc_in, 0, "6542\n"));
+	assert(evs.write(proc_in, 0, "123\n"));
+	evs.close(proc_in);
+
+	while true do
+		local buff = evs.read(proc_out, 0, 1024);
+		if #buff == 0 then break end
+		io.stderr:write(buff);
 	end
+
+	print(assert(evs.wait(proc)));
 end);
 
 assert(run());

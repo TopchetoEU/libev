@@ -13,6 +13,7 @@
 #include <linux/stat.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <sys/socket.h>
 
 typedef struct ev_uring {
@@ -32,6 +33,7 @@ typedef enum {
 	EVI_URING_STAT,
 	EVI_URING_RW,
 	EVI_URING_ACCEPT,
+	EVI_URING_WAIT,
 } ev_uring_type_t;
 
 typedef struct {
@@ -52,6 +54,11 @@ typedef struct {
 			struct sockaddr_storage addr;
 			socklen_t len;
 		} accept;
+		struct {
+			int *pcode;
+			int *psig;
+			siginfo_t buff;
+		} wait;
 	};
 } *ev_uring_udata_t;
 
@@ -168,6 +175,17 @@ static ev_code_t evi_uring_send(ev_uring_t uring, void *ticket, ev_socket_t fd, 
 	return EV_OK;
 }
 
+static ev_code_t evi_uring_wait(ev_uring_t uring, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
+	ev_uring_udata_t udata = evi_uring_mkudata(EVI_URING_WAIT, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->wait.pcode = pcode;
+	udata->wait.psig = psig;
+
+	io_uring_prep_waitid(evi_uring_get_sqe(uring, udata), P_PID, (pid_t)(size_t)proc, &udata->wait.buff, WEXITED | WSTOPPED | WCONTINUED, 0);
+	io_uring_submit(&uring->ctx);
+	return EV_OK;
+}
+
 static void evi_uring_worker(void *arg) {
 	ev_uring_t uring = (ev_uring_t)arg;
 
@@ -201,6 +219,27 @@ static void evi_uring_worker(void *arg) {
 					break;
 				case EVI_URING_ACCEPT:
 					evi_unix_conv_sockaddr(&udata->accept.addr, udata->accept.paddr, udata->accept.pport);
+					*udata->accept.pres = evi_unix_mksock(cqe->res);
+					break;
+				case EVI_URING_WAIT:
+					*udata->wait.pcode = -1;
+					*udata->wait.psig = -1;
+					switch (udata->wait.buff.si_code) {
+						case CLD_EXITED:
+							*udata->wait.pcode = udata->wait.buff.si_status;
+							break;
+						case CLD_KILLED:
+						case CLD_DUMPED:
+						case CLD_STOPPED:
+							*udata->wait.psig = udata->wait.buff.si_status;
+							break;
+						case CLD_TRAPPED:
+							*udata->wait.psig = SIGTRAP;
+							break;
+						case CLD_CONTINUED:
+							*udata->wait.psig = SIGCONT;
+							break;
+					}
 					*udata->accept.pres = evi_unix_mksock(cqe->res);
 					break;
 				default: break;

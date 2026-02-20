@@ -9,14 +9,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <netdb.h>
 #include <errno.h>
 #include <pwd.h>
 #include <time.h>
+#include <dirent.h>
 
 struct ev_dir {};
 
@@ -403,6 +404,150 @@ static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
 	}
 
 	return EV_EINVAL;
+}
+
+static int evi_unix_mkstd(int std_fd, int *pparent, int *pchild, ev_spawn_stdio_flags_t flags, ev_fd_t *pfd) {
+	switch (flags) {
+		case EV_SPAWN_STD_INHERIT:
+			*pparent = *pchild = std_fd;
+			break;
+		case EV_SPAWN_STD_DUP:
+			*pparent = *pchild = evi_unix_fd(*pfd);
+			break;
+		case EV_SPAWN_STD_PIPE: {
+			int pipe_fd[2];
+			if (pipe(pipe_fd) < 0) return -1;
+
+			if (std_fd == STDIN_FILENO) {
+				*pparent = pipe_fd[1];
+				*pchild = pipe_fd[0];
+			}
+			else {
+				*pparent = pipe_fd[0];
+				*pchild = pipe_fd[1];
+			}
+
+			break;
+		}
+	}
+
+	return 0;
+}
+
+// Equivalent to posix's fork then exec
+static ev_code_t evi_sync_spawn(
+	ev_proc_t *pres,
+	const char **argv, const char **env,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_fd_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_fd_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_fd_t *perr
+) {
+	int in_parent, in_child;
+	int out_parent, out_child;
+	int err_parent, err_child;
+
+	int status_pipe[2];
+
+	if (pipe(status_pipe) < 0) goto err;
+	if (fcntl(status_pipe[0], F_SETFD, FD_CLOEXEC) < 0) goto err_status_pipe;
+	if (fcntl(status_pipe[1], F_SETFD, FD_CLOEXEC) < 0) goto err_status_pipe;
+
+	if (evi_unix_mkstd(STDIN_FILENO, &in_parent, &in_child, in_flags, pin) < 0) goto err_status_pipe;
+	if (evi_unix_mkstd(STDOUT_FILENO, &out_parent, &out_child, out_flags, pout)) goto err_in_pipe;
+	if (evi_unix_mkstd(STDERR_FILENO, &err_parent, &err_child, err_flags, perr)) goto err_out_pipe;
+
+	pid_t pid = fork();
+	if (pid < 0) goto err_err_pipe;
+	if (!pid) { // child
+		close(status_pipe[0]);
+
+		if (in_child != STDIN_FILENO) {
+			if (dup2(in_child, STDIN_FILENO) < 0) goto err_child;
+			close(in_child);
+			if (in_child != in_parent) close(in_parent);
+		}
+		if (out_child != STDOUT_FILENO) {
+			if (dup2(out_child, STDOUT_FILENO) < 0) goto err_child;
+			close(out_child);
+			if (out_child != out_parent) close(out_parent);
+		}
+		if (err_child != STDERR_FILENO) {
+			if (dup2(err_child, STDERR_FILENO) < 0) goto err_child;
+			close(err_child);
+			if (err_child != err_parent) close(err_parent);
+		}
+
+		if (cwd) chdir(cwd);
+
+		execve(argv[0], (void*)argv, (void*)env);
+	err_child:
+		write(status_pipe[1], &errno, sizeof errno);
+		_exit(127);
+	}
+
+	close(status_pipe[1]);
+	if (in_flags == EV_SPAWN_STD_PIPE) close(in_child);
+	if (out_flags == EV_SPAWN_STD_PIPE) close(out_child);
+	if (err_flags == EV_SPAWN_STD_PIPE) close(err_child);
+
+	int child_code;
+	int code = read(status_pipe[0], &child_code, sizeof child_code);
+	close(status_pipe[0]);
+
+	if (code < 0) goto err_exec;
+	if (code > 0) {
+		errno = child_code;
+		goto err_exec;
+	}
+
+	if (in_flags == EV_SPAWN_STD_PIPE) *pin = evi_unix_mkfd(in_parent);
+	if (out_flags == EV_SPAWN_STD_PIPE) *pout = evi_unix_mkfd(out_parent);
+	if (err_flags == EV_SPAWN_STD_PIPE) *perr = evi_unix_mkfd(err_parent);
+
+	*pres = (ev_proc_t)(size_t)pid;
+	return 0;
+
+err_exec:
+	if (pid) {
+		waitpid(pid, NULL, 0);
+	}
+err_err_pipe:
+	if (err_flags == EV_SPAWN_STD_PIPE) {
+		close(err_parent);
+		close(err_child);
+	}
+err_out_pipe:
+	if (out_flags == EV_SPAWN_STD_PIPE) {
+		close(out_parent);
+		close(out_child);
+	}
+err_in_pipe:
+	if (in_flags == EV_SPAWN_STD_PIPE) {
+		close(in_parent);
+		close(in_child);
+	}
+err_status_pipe:
+	close(status_pipe[0]);
+	close(status_pipe[1]);
+err:
+	return evi_unix_conv_errno(errno);
+}
+ev_code_t evi_sync_wait(ev_proc_t proc, int *psig, int *pcode) {
+	int status;
+	if (waitpid((pid_t)(size_t)proc, &status, 0) < 0)  return evi_unix_conv_errno(errno);
+
+	*pcode = -1;
+	*psig = -1;
+
+	if (WIFEXITED(status)) {
+		*pcode = WEXITSTATUS(status);
+	}
+	if (WIFSIGNALED(status)) {
+		*pcode = WTERMSIG(status);
+	}
+
+	return 0;
 }
 
 static void evi_sleep(ev_time_t time) {

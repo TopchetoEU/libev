@@ -15,6 +15,7 @@ typedef int (*ev_worker_t)(void *pargs);
 typedef struct ev_fd *ev_fd_t;
 typedef struct ev_socket *ev_socket_t;
 typedef struct ev_dir *ev_dir_t;
+typedef struct ev_proc *ev_proc_t;
 
 typedef enum {
 	// The file will be usable only for statting (by default allowed)
@@ -36,6 +37,15 @@ typedef enum {
 	// By default, all files, not marked with this, are closed
 	EV_OPEN_SHARED = 64,
 } ev_open_flags_t;
+
+typedef enum {
+	// Use parent's stdio handle (default)
+	EV_SPAWN_STD_INHERIT,
+	// Use file descriptor, stored in the ev_fd_t* argument
+	EV_SPAWN_STD_DUP,
+	// Create a dummy file descriptor (pipe), store it in the ev_fd_t* argument and use that for the stdio handle
+	EV_SPAWN_STD_PIPE,
+} ev_spawn_stdio_flags_t;
 
 typedef enum {
 	EV_PATH_HOME,
@@ -220,5 +230,19 @@ void ev_closesock(ev_t ev, ev_socket_t sock);
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 // Gets a malloc'd string, representing the requested path
 ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
+
+// Equivalent to posix's fork then exec
+ev_code_t ev_spawn(
+	ev_t ev, void *udata, ev_proc_t *pres,
+	const char **argv, const char **env,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_fd_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_fd_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_fd_t *perr
+);
+// Equivalent to posix's waitpid
+// psig is set to the signal that terminated the child, or -1 if not terminated by a signal
+// pcode is set to the exit code of the app, or -1 if child did not exit with a code
+ev_code_t ev_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
 
 #endif
