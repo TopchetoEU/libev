@@ -12,8 +12,8 @@ typedef struct ev *ev_t;
 // Used to deploy a sync workload in an ev-managed thread
 typedef int (*ev_worker_t)(void *pargs);
 
-typedef struct ev_fd *ev_fd_t;
-typedef struct ev_socket *ev_socket_t;
+typedef struct ev_hnd *ev_handle_t;
+typedef struct ev_server *ev_server_t;
 typedef struct ev_dir *ev_dir_t;
 typedef struct ev_proc *ev_proc_t;
 
@@ -176,12 +176,20 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 // If ptimeout is not NULL and is reached, EV_POLL_TIMEOUT is returned. ptimeout is relative to the monotonic clock
 ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, void **pudata, int *perr);
 
-// Returns a reference to the stdin FD
-ev_fd_t ev_stdin(ev_t ev);
-// Returns a reference to the stdout FD
-ev_fd_t ev_stdout(ev_t ev);
-// Returns a reference to the stderr FD
-ev_fd_t ev_stderr(ev_t ev);
+// Returns a reference to the stdin stream
+ev_handle_t ev_stdin(ev_t ev);
+// Returns a reference to the stdout stream
+ev_handle_t ev_stdout(ev_t ev);
+// Returns a reference to the stderr stream
+ev_handle_t ev_stderr(ev_t ev);
+
+// Equivalent to posix's read
+ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Equivalent to posix's write
+ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Unlike all other functions, close will complete synchronously, and will never error out
+// Equivalent to posix's close
+void ev_close(ev_t ev, ev_handle_t fd);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
@@ -189,60 +197,51 @@ ev_fd_t ev_stderr(ev_t ev);
 // Exceptions to the model are the ev_close and ev_closedir functions, which are synchronous - this makes them fit to be called in a GC
 
 // Equivalent to posix's open
-ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
+ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // Equivalent to posix's pread
-ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
+ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
 // Equivalent to posix's pwrite
-ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 // Equivalent to posix's sync
-ev_code_t ev_sync(ev_t ev, void *udata, ev_fd_t fd);
+ev_code_t ev_file_sync(ev_t ev, void *udata, ev_handle_t fd);
 // Equivalent to posix's stat
-ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
-// Equivalent to posix's fstat
-ev_code_t ev_fstat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
-// Unlike all other functions, close will complete synchronously, and will never error out
-// Equivalent to posix's close
-void ev_close(ev_t ev, ev_fd_t fd);
+ev_code_t ev_file_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 
 // Equivalent to posix's mkdir
-ev_code_t ev_mkdir(ev_t ev, void *udata, const char *path, int mode);
+ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
 // Equivalent to posix's opendir
-ev_code_t ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
+ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
-ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
+ev_code_t ev_dir_next(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 // Equivalent to posix's closedir
-void ev_closedir(ev_t ev, ev_dir_t fd);
+void ev_dir_close(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
-// Equivalent to socket() + connect()
-ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
 // Equivalent to posix's accept
-ev_code_t ev_accept(ev_t ev, void *udata, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server);
-// Equivalent to posix's recv
-ev_code_t ev_recv(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
-// Equivalent to posix's send
-ev_code_t ev_send(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
-// Equivalent to posix's close (but for sockets)
-void ev_closesock(ev_t ev, ev_socket_t sock);
+ev_code_t ev_server_accept(ev_t ev, void *udata, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server);
+void ev_server_close(ev_t ev, ev_server_t server);
+
+// Equivalent to socket() + connect()
+ev_code_t ev_socket_connect(ev_t ev, void *udata, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+
+// Equivalent to posix's fork then exec
+ev_code_t ev_proc_spawn(
+	ev_t ev, void *udata, ev_proc_t *pres,
+	const char **argv, const char **env,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_handle_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_handle_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr
+);
+// Equivalent to posix's waitpid
+// psig is set to the signal that terminated the child, or -1 if not terminated by a signal
+// pcode is set to the exit code of the app, or -1 if child did not exit with a code
+ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
 
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 // Gets a malloc'd string, representing the requested path
 ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
-
-// Equivalent to posix's fork then exec
-ev_code_t ev_spawn(
-	ev_t ev, void *udata, ev_proc_t *pres,
-	const char **argv, const char **env,
-	const char *cwd,
-	ev_spawn_stdio_flags_t in_flags, ev_fd_t *pin,
-	ev_spawn_stdio_flags_t out_flags, ev_fd_t *pout,
-	ev_spawn_stdio_flags_t err_flags, ev_fd_t *perr
-);
-// Equivalent to posix's waitpid
-// psig is set to the signal that terminated the child, or -1 if not terminated by a signal
-// pcode is set to the exit code of the app, or -1 if child did not exit with a code
-ev_code_t ev_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
 
 #endif

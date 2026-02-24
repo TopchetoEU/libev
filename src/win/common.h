@@ -16,6 +16,32 @@ struct ev_dir {
 	WIN32_FIND_DATAA data;
 };
 
+struct ev_hnd {
+	enum {
+		EVI_WIN_HND,
+		EVI_WIN_SOCK,
+	} kind;
+	union {
+		HANDLE hnd;
+		SOCKET sock;
+	};
+};
+
+static ev_handle_t evi_win_mkhnd(HANDLE hnd) {
+	ev_handle_t res = malloc(sizeof *res);
+	if (!res) return NULL;
+	res->kind = EVI_WIN_HND;
+	res->hnd = hnd;
+	return res;
+}
+static ev_handle_t evi_win_mksock(SOCKET hnd) {
+	ev_handle_t res = malloc(sizeof *res);
+	if (!res) return NULL;
+	res->kind = EVI_WIN_SOCK;
+	res->sock = hnd;
+	return res;
+}
+
 static ev_time_t evi_win_conv_filetime(FILETIME filetime) {
 	static const uint64_t EPOCH_DIFFERENCE = 11644473600;
 
@@ -168,6 +194,10 @@ static ev_code_t evi_win_conv_errno(int winerr) {
 		case ERROR_WAIT_NO_CHILDREN: return EV_ECHILD;
 		case ERROR_WORKING_SET_QUOTA: return EV_EAGAIN;
 		case ERROR_WRITE_PROTECT: return EV_EROFS;
+		case ERROR_RESOURCE_DATA_NOT_FOUND: return EV_ENOEXEC;
+		case ERROR_RESOURCE_TYPE_NOT_FOUND: return EV_ENOEXEC;
+		case ERROR_RESOURCE_NAME_NOT_FOUND: return EV_ENOEXEC;
+		case ERROR_RESOURCE_LANG_NOT_FOUND: return EV_ENOEXEC;
 
 		case WSAEACCES: return EV_EACCES;
 		case WSAEADDRINUSE: return EV_EADDRINUSE;

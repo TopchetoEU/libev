@@ -19,13 +19,16 @@
 #include <ws2tcpip.h>
 #include <ws2ipdef.h>
 #include <shlobj.h>
+#include <processenv.h>
+#include <processthreadsapi.h>
+#include <synchapi.h>
 
 // FIXME: never before run code, shat it out in an evening.
 // Consider windows as unsupported, until I can be bothered to cross-compile luajit
 
 #define COMBINE64(a, b) (((uint64_t)(b) << 32) | (a))
 
-static SOCKET evi_win_mksock(ev_proto_t proto, ev_addr_type_t type) {
+static SOCKET evi_win_sock_new(ev_proto_t proto, ev_addr_type_t type) {
 	return socket(
 		type == EV_ADDR_IPV4 ? AF_INET : AF_INET6,
 		proto == EV_PROTO_UDP ? SOCK_DGRAM : SOCK_STREAM,
@@ -33,7 +36,81 @@ static SOCKET evi_win_mksock(ev_proto_t proto, ev_addr_type_t type) {
 	);
 }
 
-static ev_code_t evi_sync_open(ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+static char *evi_win_getpath(int id, const char *suffix) {
+	char *res = suffix ? malloc(MAX_PATH + strlen(suffix) + 1) : malloc(MAX_PATH);
+	if (!res) return NULL;
+	if (SHGetFolderPath(NULL, id, NULL, 0, res) != S_OK) return NULL;
+
+	if (suffix) strcpy(res, suffix);
+	res = realloc(res, strlen(res) + 1);
+	return res;
+}
+
+static ev_code_t evi_sync_read(ev_handle_t fd, char *buff, size_t *pn) {
+	switch (fd->kind) {
+		case EVI_WIN_HND: {
+			DWORD out_n;
+
+			if (!ReadFile(fd->hnd, (void*)buff, *pn, &out_n, NULL)) {
+				if (GetLastError() == ERROR_HANDLE_EOF || GetLastError() == ERROR_BROKEN_PIPE) {
+					*pn = 0;
+					return EV_OK;
+				}
+
+				return evi_win_conv_errno(GetLastError());
+			}
+			*pn = out_n;
+			return EV_OK;
+		}
+		case EVI_WIN_SOCK: {
+			int res = recv(fd->sock, (void*)buff, *pn, 0);
+			if (res < 0) return evi_win_conv_errno(WSAGetLastError());
+
+			*pn = res;
+			return EV_OK;
+		}
+		default: return EV_EBADF;
+	}
+}
+static ev_code_t evi_sync_write(ev_handle_t fd, char *buff, size_t *pn) {
+	switch (fd->kind) {
+		case EVI_WIN_HND: {
+			DWORD out_n;
+
+			if (!WriteFile(fd->hnd, (void*)buff, *pn, &out_n, NULL)) {
+				if (GetLastError() == ERROR_HANDLE_EOF || GetLastError() == ERROR_BROKEN_PIPE) {
+					*pn = 0;
+					return EV_OK;
+				}
+
+				return evi_win_conv_errno(GetLastError());
+			}
+			*pn = out_n;
+			return EV_OK;
+		}
+		case EVI_WIN_SOCK: {
+			int res = send(fd->sock, (void*)buff, *pn, 0);
+			if (res < 0) return evi_win_conv_errno(WSAGetLastError());
+
+			*pn = res;
+			return EV_OK;
+		}
+		default: return EV_EBADF;
+	}
+}
+void ev_close(ev_t ev, ev_handle_t fd) {
+	(void)ev;
+	switch (fd->kind) {
+		case EVI_WIN_HND:
+			CloseHandle(fd->hnd);
+			break;
+		case EVI_WIN_SOCK:
+			closesocket(fd->sock);
+			break;
+	}
+}
+
+static ev_code_t evi_sync_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	(void)mode;
 	DWORD access = 0;
 	DWORD access_others = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
@@ -74,17 +151,36 @@ static ev_code_t evi_sync_open(ev_fd_t *pres, const char *path, ev_open_flags_t 
 		sec_attribs.bInheritHandle = true;
 	}
 
-	HANDLE fd = CreateFile(path, access, access_others, NULL, create_mode, FILE_ATTRIBUTE_NORMAL | res_flags, NULL);
-	if (fd == INVALID_HANDLE_VALUE) return evi_win_conv_errno(GetLastError());
+	HANDLE hnd = CreateFile(path, access, access_others, NULL, create_mode, FILE_ATTRIBUTE_NORMAL | res_flags, NULL);
+	if (hnd == INVALID_HANDLE_VALUE) return evi_win_conv_errno(GetLastError());
 
-	*pres = fd;
+	*pres = evi_win_mkhnd(hnd);
 	return EV_OK;
 }
-static ev_code_t evi_sync_read(ev_fd_t fd, const char *buff, size_t *n, size_t offset) {
+static ev_code_t evi_sync_file_read(ev_handle_t fd, const char *buff, size_t *n, size_t offset) {
+	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
+
 	DWORD out_n;
 	OVERLAPPED overlapped = { .Pointer = (void*)offset };
 
-	if (!ReadFile(fd, (void*)buff, *n, &out_n, &overlapped)) {
+	if (!ReadFile(fd->hnd, (void*)buff, *n, &out_n, &overlapped)) {
+		if (GetLastError() == ERROR_HANDLE_EOF || GetLastError() == ERROR_BROKEN_PIPE) {
+			*n = 0;
+			return EV_OK;
+		}
+
+		return evi_win_conv_errno(GetLastError());
+	}
+	*n = out_n;
+	return EV_OK;
+}
+static ev_code_t evi_sync_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
+	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
+
+	DWORD out_n;
+	OVERLAPPED overlapped = { .Pointer = (void*)offset };
+
+	if (!WriteFile(fd->hnd, buff, *n, &out_n, &overlapped)) {
 		if (GetLastError() == ERROR_HANDLE_EOF) {
 			*n = 0;
 			return EV_OK;
@@ -95,28 +191,16 @@ static ev_code_t evi_sync_read(ev_fd_t fd, const char *buff, size_t *n, size_t o
 	*n = out_n;
 	return EV_OK;
 }
-static ev_code_t evi_sync_write(ev_fd_t fd, char *buff, size_t *n, size_t offset) {
-	DWORD out_n;
-	OVERLAPPED overlapped = { .Pointer = (void*)offset };
-
-	if (!WriteFile(fd, buff, *n, &out_n, &overlapped)) {
-		if (GetLastError() == ERROR_HANDLE_EOF) {
-			*n = 0;
-			return EV_OK;
-		}
-
-		return evi_win_conv_errno(GetLastError());
-	}
-	*n = out_n;
+static ev_code_t evi_sync_file_sync(ev_handle_t fd) {
+	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
+	if (!FlushFileBuffers(fd->hnd)) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
-static ev_code_t evi_sync_sync(ev_fd_t fd) {
-	if (!FlushFileBuffers(fd)) return evi_win_conv_errno(GetLastError());
-	return EV_OK;
-}
-static ev_code_t evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
+static ev_code_t evi_sync_file_stat(ev_handle_t fd, ev_stat_t *buff) {
+	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
+
 	BY_HANDLE_FILE_INFORMATION info;
-	if (!GetFileInformationByHandle(fd, &info)) return evi_win_conv_errno(GetLastError());
+	if (!GetFileInformationByHandle(fd->hnd, &info)) return evi_win_conv_errno(GetLastError());
 
 	// Fake it till we make it .-.
 
@@ -159,17 +243,13 @@ static ev_code_t evi_sync_stat(ev_fd_t fd, ev_stat_t *buff) {
 
 	return EV_OK;
 }
-void ev_close(ev_t ev, ev_fd_t fd) {
-	(void)ev;
-	CloseHandle(fd);
-}
 
-static ev_code_t evi_sync_mkdir(const char *path, int mode) {
+static ev_code_t evi_sync_dir_new(const char *path, int mode) {
 	(void)mode;
 	if (!CreateDirectory(path, NULL)) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
-static ev_code_t evi_sync_opendir(ev_dir_t *pres, const char *path) {
+static ev_code_t evi_sync_dir_open(ev_dir_t *pres, const char *path) {
 	char *pattern = malloc(strlen(path) + 3);
 	if (!pattern) return EV_ENOMEM;
 
@@ -191,7 +271,7 @@ static ev_code_t evi_sync_opendir(ev_dir_t *pres, const char *path) {
 	*pres = res;
 	return EV_OK;
 }
-static ev_code_t evi_sync_readdir(ev_dir_t dir, char **pname) {
+static ev_code_t evi_sync_dir_next(ev_dir_t dir, char **pname) {
 	while (true) {
 		if (dir->done) {
 			*pname = NULL;
@@ -213,26 +293,14 @@ static ev_code_t evi_sync_readdir(ev_dir_t dir, char **pname) {
 		return EV_OK;
 	}
 }
-void ev_closedir(ev_t ev, ev_dir_t dir) {
+void ev_dir_close(ev_t ev, ev_dir_t dir) {
 	(void)ev;
 	FindClose(dir->hnd);
 	free(dir);
 }
 
-static ev_code_t evi_sync_connect(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
-	SOCKET sock = evi_win_mksock(proto, addr.type);
-	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
-
-	struct sockaddr_storage arg_addr;
-	int len = evi_win_conv_addr(addr, port, &arg_addr);
-
-	if (connect(sock, (void*)&arg_addr, len) < 0) return evi_win_conv_errno(WSAGetLastError());
-
-	*pres = (void*)sock;
-	return EV_OK;
-}
-static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
-	SOCKET sock = evi_win_mksock(proto, addr.type);
+static ev_code_t evi_sync_server_bind(ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
+	SOCKET sock = evi_win_sock_new(proto, addr.type);
 	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
 
 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*)&(int) { 1 }, sizeof(int)) < 0) {
@@ -252,35 +320,39 @@ static ev_code_t evi_sync_bind(ev_socket_t *pres, ev_proto_t proto, ev_addr_t ad
 		return evi_win_conv_errno(WSAGetLastError());
 	}
 
-	*pres = (void*)sock;
+	*pres = (void*)(size_t)sock;
 	return EV_OK;
 }
-static ev_code_t evi_sync_recv(ev_socket_t sock, char *buff, size_t *pn) {
-	int res = recv((SOCKET)sock, (void*)buff, *pn, 0);
-	if (res < 0) return evi_win_conv_errno(WSAGetLastError());
-
-	*pn = res;
-	return EV_OK;
-}
-static ev_code_t evi_sync_send(ev_socket_t sock, char *buff, size_t *pn) {
-	int res = send((SOCKET)sock, (void*)buff, *pn, 0);
-	if (res < 0) return evi_win_conv_errno(WSAGetLastError());
-
-	*pn = res;
-	return EV_OK;
-}
-static ev_code_t evi_sync_accept(ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server) {
+static ev_code_t evi_sync_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
 	struct sockaddr_storage addr = {};
 	socklen_t addr_len = sizeof addr;
 
-	SOCKET client = accept((SOCKET)server, (void*)&addr, &addr_len);
+	SOCKET client = accept((SOCKET)(size_t)server, (void*)&addr, &addr_len);
 	if (!client) return evi_win_conv_errno(WSAGetLastError());
 
 	evi_win_conv_sockaddr(&addr, paddr, pport);
 
-	*pres = (void*)client;
+	*pres = (void*)(size_t)client;
 	return EV_OK;
 }
+void ev_server_close(ev_t ev, ev_server_t server) {
+	(void)ev;
+	closesocket((SOCKET)(size_t)server);
+}
+
+static ev_code_t evi_sync_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+	SOCKET sock = evi_win_sock_new(proto, addr.type);
+	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
+
+	struct sockaddr_storage arg_addr;
+	int len = evi_win_conv_addr(addr, port, &arg_addr);
+
+	if (connect(sock, (void*)&arg_addr, len) < 0) return evi_win_conv_errno(WSAGetLastError());
+
+	*pres = evi_win_mksock(sock);
+	return EV_OK;
+}
+
 static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	struct addrinfo hints = { 0 };
 
@@ -347,17 +419,6 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 	*pres = res;
 	return EV_OK;
 }
-
-static char *evi_win_getpath(int id, const char *suffix) {
-	char *res = suffix ? malloc(MAX_PATH + strlen(suffix) + 1) : malloc(MAX_PATH);
-	if (!res) return NULL;
-	if (SHGetFolderPath(NULL, id, NULL, 0, res) != S_OK) return NULL;
-
-	if (suffix) strcpy(res, suffix);
-	res = realloc(res, strlen(res) + 1);
-	return res;
-}
-
 static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
@@ -423,22 +484,20 @@ int ev_monotime(ev_time_t *pres) {
 		.nsec = (uint64_t)(counter.QuadPart % freq.QuadPart) * 1000000000LL / freq.QuadPart,
 	};
 
-	// fprintf(stderr, "MONOTIME %lld.%.9u\n", pres->sec, pres->nsec);
-	// fprintf(stderr, "MONOTIME MS %lld\n", ev_timems(*pres));
 
 	return EV_OK;
 }
 
-static int evi_stdio_init(ev_fd_t *in, ev_fd_t *out, ev_fd_t *err) {
-	*in = GetStdHandle(STD_INPUT_HANDLE);
-	*out = GetStdHandle(STD_OUTPUT_HANDLE);
-	*err = GetStdHandle(STD_ERROR_HANDLE);
+static int evi_stdio_init(ev_handle_t *in, ev_handle_t *out, ev_handle_t *err) {
+	*in = evi_win_mkhnd(GetStdHandle(STD_INPUT_HANDLE));
+	*out = evi_win_mkhnd(GetStdHandle(STD_OUTPUT_HANDLE));
+	*err = evi_win_mkhnd(GetStdHandle(STD_ERROR_HANDLE));
 
 	return EV_OK;
 }
-static int evi_stdio_free(ev_fd_t in, ev_fd_t out, ev_fd_t err) {
-	(void)in;
-	(void)out;
-	(void)err;
+static int evi_stdio_free(ev_handle_t in, ev_handle_t out, ev_handle_t err) {
+	free(in);
+	free(out);
+	free(err);
 	return EV_OK;
 }

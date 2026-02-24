@@ -1,10 +1,10 @@
-#include <stddef.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
 #include "ev/conf.h"
 #include "ev.h"
 #include "ev/errno.h"
+#include <stddef.h>
 #include <stdlib.h>
 #include <netdb.h>
 #include <errno.h>
@@ -16,29 +16,22 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-static ev_socket_t evi_unix_mksock(int fd) {
-	return (void*)(size_t)fd;
-}
-static int evi_unix_sock(ev_socket_t fd) {
-	return (int)(size_t)fd;
-}
-
 #ifdef EV_USE_LINUX
-	static ev_fd_t evi_unix_mkfd(int fd) {
+	static ev_handle_t evi_unix_mkfd(int fd) {
 		return (void*)(size_t)fd;
 	}
-	static void evi_unix_freefd(ev_fd_t fd) {
+	static void evi_unix_freefd(ev_handle_t fd) {
 		(void)fd;
 	}
 
-	static int evi_unix_isfd(ev_fd_t fd) {
+	static int evi_unix_isfd(ev_handle_t fd) {
 		(void)fd;
 		return true;
 	}
-	static int evi_unix_fd(ev_fd_t fd) {
+	static int evi_unix_fd(ev_handle_t fd) {
 		return (int)(size_t)fd;
 	}
-	static char *evi_unix_at(ev_fd_t fd) {
+	static char *evi_unix_at(ev_handle_t fd) {
 		(void)fd;
 		return NULL;
 	}
@@ -47,30 +40,30 @@ static int evi_unix_sock(ev_socket_t fd) {
 	// with only creation flags and then try to stat it, but it gets deleted in the meantime
 	// Unfortunately, there isn't a roundabout way around this
 
-	static ev_fd_t evi_unix_mkfd(int fd) {
-		return (ev_fd_t)(size_t)(fd << 1 | 1);
+	static ev_handle_t evi_unix_mkfd(int fd) {
+		return (ev_handle_t)(size_t)(fd << 1 | 1);
 	}
-	static ev_fd_t evi_unix_mkat(const char *path) {
+	static ev_handle_t evi_unix_mkat(const char *path) {
 		size_t len = strlen(path);
 		char *at = malloc(len + 1);
 		memcpy(at, path, len + 1);
-		return (ev_fd_t)at;
+		return (ev_handle_t)at;
 	}
-	static void evi_unix_freefd(ev_fd_t fd) {
+	static void evi_unix_freefd(ev_handle_t fd) {
 		if (((size_t)fd & 1) == 0) free(fd);
 	}
 
-	static int evi_unix_isfd(ev_fd_t fd) {
+	static int evi_unix_isfd(ev_handle_t fd) {
 		return (size_t)fd & 1;
 	}
-	static int evi_unix_fd(ev_fd_t fd) {
+	static int evi_unix_fd(ev_handle_t fd) {
 		return (int)((size_t)fd >> 1);
 	}
-	static char *evi_unix_at(ev_fd_t fd) {
+	static char *evi_unix_at(ev_handle_t fd) {
 		return (char*)fd;
 	}
 #else
-	struct ev_fd {
+	struct ev_hnd {
 		enum {
 			EVI_UNIX_FD,
 			EVI_UNIX_AT,
@@ -81,33 +74,33 @@ static int evi_unix_sock(ev_socket_t fd) {
 		};
 	};
 
-	static ev_fd_t evi_unix_mkfd(int fd) {
-		ev_fd_t res = malloc(sizeof *res);
+	static ev_handle_t evi_unix_mkfd(int fd) {
+		ev_handle_t res = malloc(sizeof *res);
 		if (!res) return NULL;
 		res->kind = EVI_UNIX_FD;
 		res->fd = fd;
 		return res;
 	}
-	static ev_fd_t evi_unix_mkat(const char *path) {
+	static ev_handle_t evi_unix_mkat(const char *path) {
 		size_t len = strlen(path);
-		ev_fd_t res = malloc(sizeof *res + len + 1);
+		ev_handle_t res = malloc(sizeof *res + len + 1);
 		if (!res) return NULL;
 
 		res->kind = EVI_UNIX_AT;
 		memcpy(res->at, path, len + 1);
 		return res;
 	}
-	static void evi_unix_freefd(ev_fd_t fd) {
+	static void evi_unix_freefd(ev_handle_t fd) {
 		free(fd);
 	}
 
-	static int evi_unix_isfd(ev_fd_t fd) {
+	static int evi_unix_isfd(ev_handle_t fd) {
 		return fd->kind == EVI_UNIX_FD;
 	}
-	static int evi_unix_fd(ev_fd_t fd) {
+	static int evi_unix_fd(ev_handle_t fd) {
 		return fd->fd;
 	}
-	static char *evi_unix_at(ev_fd_t fd) {
+	static char *evi_unix_at(ev_handle_t fd) {
 		return fd->at;
 	}
 #endif
@@ -316,4 +309,12 @@ static void evi_unix_conv_sockaddr(struct sockaddr_storage *sockaddr, ev_addr_t 
 			pres->v6[i] = ntohs(pres->v6[i]);
 		}
 	}
+}
+
+static int evi_unix_new_sock(ev_proto_t proto, ev_addr_type_t type) {
+	return socket(
+		type == EV_ADDR_IPV4 ? AF_INET : AF_INET6,
+		proto == EV_PROTO_UDP ? SOCK_DGRAM : SOCK_STREAM,
+		proto == EV_PROTO_UDP ? IPPROTO_UDP : IPPROTO_TCP
+	);
 }
