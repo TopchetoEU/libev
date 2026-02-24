@@ -234,14 +234,16 @@ static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 				void *udata = worker->udata;
 				ev_worker_t cb = worker->worker;
 				void *args = worker->args;
-				worker->worker = NULL;
-				worker->args = NULL;
-				worker->udata = NULL;
 
 				ev_mutex_unlock(ev->lock);
 				ev_code_t code = cb(args);
 				ev_mutex_lock(ev->lock);
+
 				evi_push(ev, udata, code);
+
+				worker->worker = NULL;
+				worker->args = NULL;
+				worker->udata = NULL;
 			}
 			if (worker->kys) break;
 

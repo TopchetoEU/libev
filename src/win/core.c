@@ -46,6 +46,116 @@ static char *evi_win_getpath(int id, const char *suffix) {
 	return res;
 }
 
+static int evi_win_child_std_new(
+	DWORD std,
+	HANDLE *pparent,
+	HANDLE *pchild,
+	ev_spawn_stdio_flags_t flags,
+	ev_handle_t *pfd
+) {
+	switch (flags) {
+		case EV_SPAWN_STD_INHERIT: {
+			*pparent = *pchild = GetStdHandle(std);
+			break;
+		}
+		case EV_SPAWN_STD_DUP: {
+			if ((*pfd)->kind != EVI_WIN_HND) return EV_ENOTSUP;
+			*pparent = *pchild = *pfd;
+			break;
+		}
+		case EV_SPAWN_STD_PIPE: {
+			SECURITY_ATTRIBUTES attribs = { .nLength = sizeof attribs, .bInheritHandle = true };
+
+			if (std == STD_INPUT_HANDLE) {
+				if (!CreatePipe(pchild, pparent, &attribs, 0)) return -1;
+			}
+			else {
+				if (!CreatePipe(pparent, pchild, &attribs, 0)) return -1;
+			}
+
+			if (!SetHandleInformation(*pparent, HANDLE_FLAG_INHERIT, 0)) return -1;
+
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static char *evi_win_argv_to_cmdline(const char **argv) {
+	size_t n = 0, buff_n = 0;
+
+	for (const char **it = argv; *it; it++) {
+		n++;
+		buff_n += 1 /* " */ + strlen(*it) * 2 /* Assuming each one is \ */ + 1 /* " */ + 1 /* Trailing space / \0 */;
+	}
+
+	char *buff = malloc(buff_n);
+	if (!buff) return NULL;
+
+	char *curr = buff;
+
+	for (size_t i = 0; i < n; i++) {
+		const char *arg = argv[i];
+
+		*(curr++) = '\"';
+
+		size_t back_n = 0;
+
+		for (const char *it = arg; *it; it++) {
+			if (*it == '\\') back_n++;
+			else if (*it == '\"') {
+				for (size_t i = 0; i < back_n; i++) {
+					*(curr++) = '\\';
+					*(curr++) = '\\';
+				}
+				*(curr++) = '\\';
+				*(curr++) = '\"';
+				back_n = 0;
+			}
+			else {
+				for (size_t i = 0; i < back_n; i++) {
+					*(curr++) = '\\';
+				}
+				back_n = 0;
+				*(curr++) = *it;
+			}
+		}
+
+		for (size_t i = 0; i < back_n; i++) {
+			*(curr++) = '\\';
+			*(curr++) = '\\';
+		}
+
+		*(curr++) = '\"';
+
+		if (i == n - 1) *(curr++) = '\0';
+		else *(curr++) = ' ';
+	}
+
+	return buff;
+}
+static char *evi_win_envp_to_envblock(const char **envp) {
+	if (!envp) return NULL;
+
+	size_t n = 0, buff_n = 0;
+
+	for (const char **it = envp; *it; it++) {
+		n++;
+		buff_n += strlen(*it) + 1 /* terminating \0 */;
+	}
+
+	char *buff = malloc(buff_n + 1 /* terminating \0 */);
+	char *curr = buff;
+
+	for (size_t i = 0; i < n; i++) {
+		curr = strcpy(curr, envp[i]) + 1;
+	}
+	*curr = '\0';
+
+	return buff;
+}
+
 static ev_code_t evi_sync_read(ev_handle_t fd, char *buff, size_t *pn) {
 	switch (fd->kind) {
 		case EVI_WIN_HND: {
@@ -351,6 +461,103 @@ static ev_code_t evi_sync_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev
 
 	*pres = evi_win_mksock(sock);
 	return EV_OK;
+}
+
+static int evi_sync_spawn(
+	ev_proc_t *pres,
+	const char **argv, const char **envp,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_handle_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_handle_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr
+) {
+	HANDLE in_parent, in_child;
+	HANDLE out_parent, out_child;
+	HANDLE err_parent, err_child;
+
+	if (evi_win_child_std_new(STD_INPUT_HANDLE, &in_parent, &in_child, in_flags, pin) < 0) goto err;
+	if (evi_win_child_std_new(STD_OUTPUT_HANDLE, &out_parent, &out_child, out_flags, pout) < 0) goto err_in_pipe;
+	if (evi_win_child_std_new(STD_ERROR_HANDLE, &err_parent, &err_child, err_flags, perr) < 0) goto err_out_pipe;
+
+	char *cmdline = evi_win_argv_to_cmdline(argv);
+	if (!cmdline) goto err_err_pipe;
+
+	char *envblock = evi_win_envp_to_envblock(envp);
+	if (!envblock) goto err_cmdline;
+
+	STARTUPINFOA start_info = { .cb = sizeof start_info };
+	start_info.hStdInput  = in_child;
+	start_info.hStdOutput = out_child;
+	start_info.hStdError  = err_child;
+	start_info.dwFlags |= STARTF_USESTDHANDLES;
+
+	PROCESS_INFORMATION proc_info;
+	BOOL res = CreateProcess(argv[0], cmdline, NULL, NULL, true, 0, envblock, cwd, &start_info, &proc_info);
+	if (!res || !proc_info.hProcess) goto err_envblock;
+
+	free(cmdline);
+	free(envblock);
+
+	if (in_flags == EV_SPAWN_STD_PIPE) {
+		CloseHandle(in_child);
+		*pin = evi_win_mkhnd(in_parent);
+	}
+	if (out_flags == EV_SPAWN_STD_PIPE) {
+		CloseHandle(out_child);
+		*pout = evi_win_mkhnd(out_parent);
+	}
+	if (err_flags == EV_SPAWN_STD_PIPE) {
+		CloseHandle(err_child);
+		*perr = evi_win_mkhnd(err_parent);
+	}
+
+	*pres = proc_info.hProcess;
+	CloseHandle(proc_info.hThread);
+
+	return 0;
+err_envblock:
+	free(envblock);
+err_cmdline:
+	free(cmdline);
+err_err_pipe:
+	if (err_flags == EV_SPAWN_STD_PIPE) {
+		CloseHandle(err_parent);
+		CloseHandle(err_child);
+	}
+err_out_pipe:
+	if (out_flags == EV_SPAWN_STD_PIPE) {
+		CloseHandle(out_parent);
+		CloseHandle(out_child);
+	}
+err_in_pipe:
+	if (in_flags == EV_SPAWN_STD_PIPE) {
+		CloseHandle(in_parent);
+		CloseHandle(in_child);
+	}
+err:
+	return evi_win_conv_errno(GetLastError());
+}
+ev_code_t evi_sync_wait(ev_proc_t proc, int *psig, int *pcode) {
+	switch (WaitForSingleObject(proc, INFINITE)) {
+		case WAIT_ABANDONED:
+			return EV_EDEADLK;
+		case WAIT_OBJECT_0:
+			break;
+		case WAIT_TIMEOUT:
+			return EV_ETIMEDOUT;
+		case WAIT_FAILED:
+			return evi_win_conv_errno(GetLastError());
+	}
+
+	DWORD code;
+	if (!GetExitCodeProcess(proc, &code)) return evi_win_conv_errno(GetLastError());
+
+	CloseHandle(proc);
+
+	*psig = -1;
+	*pcode = code;
+
+	return 0;
 }
 
 static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {

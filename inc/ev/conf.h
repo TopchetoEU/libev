@@ -27,6 +27,9 @@
 	#endif
 #elif defined WIN32
 	#define EV_USE_WIN32
+	#ifndef EV_USE_MULTITHREAD
+		#define EV_USE_MULTITHREAD
+	#endif
 #endif
 
 #define EV_USE_PTRTAG

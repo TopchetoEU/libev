@@ -59,7 +59,7 @@ typedef enum {
 	EV_ENOPROTOOPT = -92, // protocol not available
 	EV_EPROTONOSUPPORT = -93, // protocol not supported
 	EV_ESOCKTNOSUPPORT = -94, // socket type not supported
-	EV_ENOTSUP = -95, // operation not supported on socket
+	EV_ENOTSUP = -95, // operation not supported
 	EV_EPFNOSUPPORT = -96, // operation not supported on socket
 	EV_EAFNOSUPPORT = -97, // address family not supported
 	EV_EADDRINUSE = -98, // address already in use
