@@ -5,24 +5,29 @@ ffi.cdef [[
 	typedef int64_t off_t;
 	typedef int ev_code_t;
 
+	void *malloc(size_t n);
 	void free(void *ptr);
-	int printf(const char *fmt, ...);
+	// int printf(const char *fmt, ...);
 ]];
 
-local libev = ffi.load "./bin/Linux/libev.so";
+if jit.os ~= "Windows" then
+	ffi.cdef [[
+		int printf(const char *fmt, ...);
+	]];
+end
+
+local libev = ffi.load(jit.os == "Windows" and "./bin/Windows/libev.dll" or "./bin/Linux/libev.so");
 ffi.cdef [[
 #line 13
 
-void *malloc(size_t n);
-void free(void *ptr);
 
 typedef struct ev *ev_t;
 
 // Used to deploy a sync workload in an ev-managed thread
 typedef int (*ev_worker_t)(void *pargs);
 
-typedef struct ev_fd *ev_fd_t;
-typedef struct ev_socket *ev_socket_t;
+typedef struct ev_hnd *ev_handle_t;
+typedef struct ev_server *ev_server_t;
 typedef struct ev_dir *ev_dir_t;
 typedef struct ev_proc *ev_proc_t;
 
@@ -185,12 +190,20 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 // If ptimeout is not NULL and is reached, EV_POLL_TIMEOUT is returned. ptimeout is relative to the monotonic clock
 ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, void **pudata, int *perr);
 
-// Returns a reference to the stdin FD
-ev_fd_t ev_stdin(ev_t ev);
-// Returns a reference to the stdout FD
-ev_fd_t ev_stdout(ev_t ev);
-// Returns a reference to the stderr FD
-ev_fd_t ev_stderr(ev_t ev);
+// Returns a reference to the stdin stream
+ev_handle_t ev_stdin(ev_t ev);
+// Returns a reference to the stdout stream
+ev_handle_t ev_stdout(ev_t ev);
+// Returns a reference to the stderr stream
+ev_handle_t ev_stderr(ev_t ev);
+
+// Equivalent to posix's read
+ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Equivalent to posix's write
+ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Unlike all other functions, close will complete synchronously, and will never error out
+// Equivalent to posix's close
+void ev_close(ev_t ev, ev_handle_t fd);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
@@ -198,64 +211,55 @@ ev_fd_t ev_stderr(ev_t ev);
 // Exceptions to the model are the ev_close and ev_closedir functions, which are synchronous - this makes them fit to be called in a GC
 
 // Equivalent to posix's open
-ev_code_t ev_open(ev_t ev, void *udata, ev_fd_t *pres, const char *path, ev_open_flags_t flags, int mode);
+ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // Equivalent to posix's pread
-ev_code_t ev_read(ev_t ev, void *udata, ev_fd_t fd, const char *buff, size_t *n, size_t offset);
+ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
 // Equivalent to posix's pwrite
-ev_code_t ev_write(ev_t ev, void *udata, ev_fd_t fd, char *buff, size_t *n, size_t offset);
+ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 // Equivalent to posix's sync
-ev_code_t ev_sync(ev_t ev, void *udata, ev_fd_t fd);
+ev_code_t ev_file_sync(ev_t ev, void *udata, ev_handle_t fd);
 // Equivalent to posix's stat
-ev_code_t ev_stat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
-// Equivalent to posix's fstat
-ev_code_t ev_fstat(ev_t ev, void *udata, ev_fd_t fd, ev_stat_t *buff);
-// Unlike all other functions, close will complete synchronously, and will never error out
-// Equivalent to posix's close
-void ev_close(ev_t ev, ev_fd_t fd);
+ev_code_t ev_file_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 
 // Equivalent to posix's mkdir
-ev_code_t ev_mkdir(ev_t ev, void *udata, const char *path, int mode);
+ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
 // Equivalent to posix's opendir
-ev_code_t ev_opendir(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
+ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
-ev_code_t ev_readdir(ev_t ev, void *udata, ev_dir_t fd, char **pname);
+ev_code_t ev_dir_next(ev_t ev, void *udata, ev_dir_t fd, char **pname);
 // Equivalent to posix's closedir
-void ev_closedir(ev_t ev, ev_dir_t fd);
+void ev_dir_close(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
-ev_code_t ev_bind(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
-// Equivalent to socket() + connect()
-ev_code_t ev_connect(ev_t ev, void *udata, ev_socket_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
 // Equivalent to posix's accept
-ev_code_t ev_accept(ev_t ev, void *udata, ev_socket_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_socket_t server);
-// Equivalent to posix's recv
-ev_code_t ev_recv(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
-// Equivalent to posix's send
-ev_code_t ev_send(ev_t ev, void *udata, ev_socket_t sock, char *buff, size_t *pn);
-// Equivalent to posix's close (but for sockets)
-void ev_closesock(ev_t ev, ev_socket_t sock);
+ev_code_t ev_server_accept(ev_t ev, void *udata, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server);
+void ev_server_close(ev_t ev, ev_server_t server);
+
+// Equivalent to socket() + connect()
+ev_code_t ev_socket_connect(ev_t ev, void *udata, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
+
+// Equivalent to posix's fork then exec
+ev_code_t ev_proc_spawn(
+	ev_t ev, void *udata, ev_proc_t *pres,
+	const char **argv, const char **env,
+	const char *cwd,
+	ev_spawn_stdio_flags_t in_flags, ev_handle_t *pin,
+	ev_spawn_stdio_flags_t out_flags, ev_handle_t *pout,
+	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr
+);
+// Equivalent to posix's waitpid
+// psig is set to the signal that terminated the child, or -1 if not terminated by a signal
+// pcode is set to the exit code of the app, or -1 if child did not exit with a code
+ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
 
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 // Gets a malloc'd string, representing the requested path
 ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
-
-// Equivalent to posix's fork then exec
-ev_code_t ev_spawn(
-	ev_t ev, void *udata, ev_proc_t *pres,
-	const char **argv, const char **env,
-	const char *cwd,
-	ev_spawn_stdio_flags_t in_flags, ev_fd_t *pin,
-	ev_spawn_stdio_flags_t out_flags, ev_fd_t *pout,
-	ev_spawn_stdio_flags_t err_flags, ev_fd_t *perr
-);
-// Equivalent to posix's waitpid
-// psig is set to the signal that terminated the child, or -1 if not terminated by a signal
-// pcode is set to the exit code of the app, or -1 if child did not exit with a code
-ev_code_t ev_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
 ]];
 
-local libev_dyn = ffi.load "./bin/Linux/libev-dyn.so";
+local libev_dyn = ffi.load(jit.os == "Windows" and "./bin/Windows/libev-dyn.dll" or "./bin/Linux/libev-dyn.so");
 ffi.cdef [[
 // A simple wrapper around libffi, so that ev_exec can be used by dynamic languages
 
@@ -364,20 +368,7 @@ local function invoke(handle, ...)
 	if not ok then return error(err, 0) end
 end
 
-function ev.open(cb, path, flags, mode)
-	local pres = ffi.new "ev_fd_t[1]";
-
-	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
-		return invoke(cb, pres[0]);
-	end
-
-	return call_wrap(libev.ev_open, handle, pres, path, flags, assert(tonumber(mode, 8)));
-end
-function ev.close(fd)
-	return libev.ev_close(loop, fd);
-end
-function ev.rawread(cb, fd, offset, n, ptr)
+function ev.rawread(cb, sock, n, ptr)
 	local pn = ffi.new("size_t[1]", n);
 
 	local function handle(code)
@@ -385,9 +376,9 @@ function ev.rawread(cb, fd, offset, n, ptr)
 		return invoke(cb, pn[0], ptr);
 	end
 
-	return call_wrap(libev.ev_read, handle, fd, ptr, pn, offset);
+	return call_wrap(libev.ev_read, handle, sock, ptr, pn);
 end
-function ev.rawwrite(cb, fd, offset, n, ptr)
+function ev.rawwrite(cb, sock, n, ptr)
 	local pn = ffi.new("size_t[1]", n);
 
 	local function handle(code)
@@ -395,26 +386,77 @@ function ev.rawwrite(cb, fd, offset, n, ptr)
 		return invoke(cb, pn[0], ptr);
 	end
 
-	return call_wrap(libev.ev_write, handle, fd, ptr, pn, offset);
+	return call_wrap(libev.ev_write, handle, sock, ptr, pn);
 end
-function ev.read(cb, fd, offset, n)
+function ev.read(cb, sock, n)
 	local buff = ffi.new("char[?]", n);
 
 	return ev.rawread(function (n, ptr)
 		if not n then return invoke(cb, n, ptr) end
 		return invoke(cb, ffi.string(ptr, n));
-	end, fd, offset, n, buff);
+	end, sock, n, buff);
 end
-function ev.write(cb, fd, offset, str)
+function ev.write(cb, sock, str)
 	local buff = ffi.new("char[?]", #str);
 	ffi.copy(buff, str, #str);
 
 	return ev.rawwrite(function (n, ptr)
 		if not n then return invoke(cb, n, ptr) end
 		return invoke(cb, n);
+	end, sock, #str, buff);
+end
+function ev.close(fd)
+	return libev.ev_close(loop, fd);
+end
+
+function ev.file_open(cb, path, flags, mode)
+	local pres = ffi.new "ev_handle_t[1]";
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, pres[0]);
+	end
+
+	return call_wrap(libev.ev_file_open, handle, pres, path, flags, assert(tonumber(mode, 8)));
+end
+function ev.file_rawread(cb, fd, offset, n, ptr)
+	local pn = ffi.new("size_t[1]", n);
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, pn[0], ptr);
+	end
+
+	return call_wrap(libev.ev_file_read, handle, fd, ptr, pn, offset);
+end
+function ev.file_rawwrite(cb, fd, offset, n, ptr)
+	local pn = ffi.new("size_t[1]", n);
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, pn[0], ptr);
+	end
+
+	return call_wrap(libev.ev_file_write, handle, fd, ptr, pn, offset);
+end
+function ev.file_read(cb, fd, offset, n)
+	local buff = ffi.new("char[?]", n);
+
+	return ev.file_rawread(function (n, ptr)
+		if not n then return invoke(cb, n, ptr) end
+		return invoke(cb, ffi.string(ptr, n));
+	end, fd, offset, n, buff);
+end
+function ev.file_write(cb, fd, offset, str)
+	local buff = ffi.new("char[?]", #str);
+	ffi.copy(buff, str, #str);
+
+	return ev.file_rawwrite(function (n, ptr)
+		if not n then return invoke(cb, n, ptr) end
+		return invoke(cb, n);
 	end, fd, offset, #str, buff);
 end
-function ev.stat(cb, fd)
+function ev.file_stat(cb, fd)
 	local pbuff = ffi.new "ev_stat_t[1]";
 
 	local function handle(code)
@@ -422,19 +464,19 @@ function ev.stat(cb, fd)
 		return invoke(cb, pbuff[0]);
 	end
 
-	return call_wrap(libev.ev_stat, handle, fd, pbuff);
+	return call_wrap(libev.ev_file_stat, handle, fd, pbuff);
 end
 
-function ev.spawn(cb, opts)
+function ev.proc_spawn(cb, opts)
 	local pres = ffi.new "ev_proc_t[1]";
 
 	local function fix_stdfd(fd)
 		if fd == "inherit" then
 			return 0, nil;
 		elseif fd == "pipe" then
-			return 2, ffi.new "ev_fd_t[1]";
+			return 2, ffi.new "ev_handle_t[1]";
 		else
-			return 1, ffi.new("ev_fd_t[1]", fd);
+			return 1, ffi.new("ev_handle_t[1]", fd);
 		end
 	end
 
@@ -452,6 +494,7 @@ function ev.spawn(cb, opts)
 	for i = 1, #opts.argv do
 		argv[i - 1] = stddup(opts.argv[i]);
 	end
+	argv[#opts.argv] = nil;
 
 	local env_key_n = 0;
 
@@ -459,7 +502,7 @@ function ev.spawn(cb, opts)
 		env_key_n = env_key_n + 1;
 	end
 
-	local env = ffi.cast("const char**", libc.malloc(ffi.sizeof("const char**", #opts.env + env_key_n * 2 + 1)));
+	local env = ffi.cast("const char**", libc.malloc(ffi.sizeof("const char**", #opts.env + env_key_n + 1)));
 
 	local function handle(code)
 		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
@@ -474,20 +517,20 @@ function ev.spawn(cb, opts)
 	end
 
 	for i = 1, #opts.env do
-		env[(i - 1) * 2] = stddup(opts.env[i][1]);
-		env[(i - 1) * 2 + 1] = stddup(opts.env[i][2]);
+		env[i - 1] = stddup(opts.env[i][1] .. "=" .. opts.env[i][2]);
 	end
 
 	local i = 0;
 	for k, v in pairs(opts.env) do
-		env[#opts.env * 2 + i * 2] = stddup(k);
-		env[#opts.env * 2 + i * 2 + 1] = stddup(v);
+		env[#opts.env + i] = stddup(k .. v);
 		i = i + 1;
 	end
 
-	return call_wrap(libev.ev_spawn, handle, pres, argv, env, opts.cwd, in_flags, pin, out_flags, pout, err_flags, perr);
+	env[#opts.env + env_key_n] = nil;
+
+	return call_wrap(libev.ev_proc_spawn, handle, pres, argv, env, opts.cwd, in_flags, pin, out_flags, pout, err_flags, perr);
 end
-function ev.wait(cb, proc)
+function ev.proc_wait(cb, proc)
 	local pcode = ffi.new "int[1]";
 	local psig = ffi.new "int[1]";
 
@@ -496,18 +539,18 @@ function ev.wait(cb, proc)
 		return invoke(cb, tonumber(pcode[0]), tonumber(psig[0]));
 	end
 
-	return call_wrap(libev.ev_wait, handle, proc, pcode, psig);
+	return call_wrap(libev.ev_proc_wait, handle, proc, pcode, psig);
 end
 
-function ev.mkdir(cb, path, mode)
+function ev.dir_new(cb, path, mode)
 	local function handle(code)
 		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
 		return invoke(cb, true);
 	end
 
-	return call_wrap(libev.ev_mkdir, handle, path, assert(tonumber(mode or 777, 8)));
+	return call_wrap(libev.ev_dir_new, handle, path, assert(tonumber(mode or 777, 8)));
 end
-function ev.opendir(cb, path)
+function ev.dir_open(cb, path)
 	local pres = ffi.new "ev_dir_t[1]";
 
 	local function handle(code)
@@ -515,12 +558,9 @@ function ev.opendir(cb, path)
 		return invoke(cb, pres[0]);
 	end
 
-	return call_wrap(libev.ev_opendir, handle, pres, path);
+	return call_wrap(libev.ev_dir_open, handle, pres, path);
 end
-function ev.closedir(dir)
-	libev.ev_closedir(loop, dir);
-end
-function ev.readdir(cb, dir)
+function ev.dir_next(cb, dir)
 	local pname = ffi.new "char*[1]";
 
 	local function handle(code)
@@ -528,12 +568,15 @@ function ev.readdir(cb, dir)
 		return invoke(cb, pname[0]);
 	end
 
-	return call_wrap(libev.ev_readdir, handle, dir, pname);
+	return call_wrap(libev.ev_dir_next, handle, dir, pname);
+end
+function ev.dir_close(dir)
+	libev.ev_dir_close(loop, dir);
 end
 
-function ev.connect(cb, addr, port, type)
+function ev.socket_connect(cb, addr, port, type)
 	local itype;
-	local pres = ffi.new "ev_socket_t[1]";
+	local pres = ffi.new "ev_handle_t[1]";
 
 	if type == "tcp" then
 		itype = 0;
@@ -548,11 +591,11 @@ function ev.connect(cb, addr, port, type)
 		return invoke(cb, pres[0]);
 	end
 
-	return call_wrap(libev.ev_connect, handle, pres, itype, parse_ip(addr), port);
+	return call_wrap(libev.ev_socket_connect, handle, pres, itype, parse_ip(addr), port);
 end
-function ev.bind(cb, addr, port, type)
+function ev.server_bind(cb, addr, port, type)
 	local itype;
-	local pres = ffi.new "ev_socket_t[1]";
+	local pres = ffi.new "ev_server_t[1]";
 
 	if type == "tcp" then
 		itype = 0;
@@ -567,10 +610,10 @@ function ev.bind(cb, addr, port, type)
 		return invoke(cb, pres[0]);
 	end
 
-	return call_wrap(libev.ev_bind, handle, pres, parse_ip(addr), port, itype);
+	return call_wrap(libev.ev_server_bind, handle, pres, parse_ip(addr), port, itype);
 end
-function ev.accept(cb, server)
-	local pres = ffi.new "ev_socket_t[1]";
+function ev.server_accept(cb, server)
+	local pres = ffi.new "ev_handle_t[1]";
 	local paddr = ffi.new "ev_addr_t[1]";
 	local pport = ffi.new "uint16_t[1]";
 
@@ -579,47 +622,10 @@ function ev.accept(cb, server)
 		return invoke(cb, pres[0], paddr[0], pport[0]);
 	end
 
-	return call_wrap(libev.ev_accept, handle, pres, paddr, pport, server);
+	return call_wrap(libev.ev_server_accept, handle, pres, paddr, pport, server);
 end
-function ev.rawrecv(cb, sock, n, ptr)
-	local pn = ffi.new("size_t[1]", n);
-
-	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
-		return invoke(cb, pn[0], ptr);
-	end
-
-	return call_wrap(libev.ev_recv, handle, sock, ptr, pn);
-end
-function ev.rawsend(cb, sock, n, ptr)
-	local pn = ffi.new("size_t[1]", n);
-
-	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
-		return invoke(cb, pn[0], ptr);
-	end
-
-	return call_wrap(libev.ev_send, handle, sock, ptr, pn);
-end
-function ev.recv(cb, sock, n)
-	local buff = ffi.new("char[?]", n);
-
-	return ev.rawrecv(function (n, ptr)
-		if not n then return invoke(cb, n, ptr) end
-		return invoke(cb, ffi.string(ptr, n));
-	end, sock, n, buff);
-end
-function ev.send(cb, sock, str)
-	local buff = ffi.new("char[?]", #str);
-	ffi.copy(buff, str, #str);
-
-	return ev.rawsend(function (n, ptr)
-		if not n then return invoke(cb, n, ptr) end
-		return invoke(cb, n);
-	end, sock, #str, buff);
-end
-function ev.closesock(dir)
-	libev.ev_closesock(loop, dir);
+function ev.server_close(dir)
+	libev.ev_server_close(loop, dir);
 end
 
 function ev.getaddrinfo(cb, name, flags)
@@ -664,7 +670,7 @@ function ev.getpath(cb, type)
 end
 
 --- @param str string
-function ev.mksig(func, str)
+function ev.mksignature(func, str)
 	local pres = ffi.new "ev_dyn_sig_t[1]";
 	local code = libev_dyn.ev_dyn_sig_new(func, str, pres);
 	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)) end
@@ -690,10 +696,6 @@ function ev.mksig(func, str)
 	end
 end
 
-local function hnd(...)
-	return ...;
-end
-
 local function syncify(func)
 	return function (...)
 		local ok, err = func(coroutine.running(), ...);
@@ -703,31 +705,32 @@ local function syncify(func)
 end
 
 local evs = {
-	open = syncify(ev.open),
-	rawread = syncify(ev.rawread),
-	rawwrite = syncify(ev.rawwrite),
 	read = syncify(ev.read),
 	write = syncify(ev.write),
-	stat = syncify(ev.stat),
 	close = ev.close,
 
-	mkdir = syncify(ev.mkdir),
-	opendir = syncify(ev.opendir),
-	readdir = syncify(ev.readdir),
-	closedir = ev.closedir,
+	file_open = syncify(ev.file_open),
+	file_rawread = syncify(ev.file_rawread),
+	file_rawwrite = syncify(ev.file_rawwrite),
+	file_read = syncify(ev.file_read),
+	file_write = syncify(ev.file_write),
+	file_stat = syncify(ev.file_stat),
 
-	connect = syncify(ev.connect),
-	bind = syncify(ev.bind),
-	accept = syncify(ev.accept),
-	recv = syncify(ev.recv),
-	send = syncify(ev.send),
-	closesock = ev.closesock,
+	dir_new = syncify(ev.dir_new),
+	dir_open = syncify(ev.dir_open),
+	dir_read = syncify(ev.dir_next),
+	dir_close = ev.dir_close,
+
+	socket_connect = syncify(ev.socket_connect),
+	server_bind = syncify(ev.server_bind),
+	server_accept = syncify(ev.server_accept),
+	server_close = ev.server_close,
+
+	proc_spawn = syncify(ev.proc_spawn),
+	proc_wait = syncify(ev.proc_wait),
 
 	getaddrinfo = syncify(ev.getaddrinfo),
 	getpath = syncify(ev.getpath),
-
-	spawn = syncify(ev.spawn),
-	wait = syncify(ev.wait),
 };
 
 local function run()
@@ -810,7 +813,7 @@ local function open_tcp(name, port)
 	local err;
 	for _, data in ipairs(assert(evs.getaddrinfo(name, 0))) do
 		local res;
-		res, err = evs.connect(data, port, "tcp");
+		res, err = evs.socket_connect(data, port, "tcp");
 		if res then return res end
 	end
 
@@ -822,67 +825,73 @@ local stderr = libev.ev_stderr(loop);
 local function netcat(url)
 	local sock = assert(open_tcp(url, 80));
 
-	assert(evs.send(sock, "GET / HTTP/1.1\r\nHost: " .. url .. "\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
+	assert(evs.write(sock, "GET / HTTP/1.1\r\nHost: " .. url .. "\r\nUser-Agent: example/0.1\r\nConnection: close\r\n\r\n"));
 	while true do
-		local res = assert(evs.recv(sock, 100));
+		local res = assert(evs.read(sock, 100));
 		if #res == 0 then break end
 
 		-- io.stderr:write(res);
-		assert(evs.write(stderr, 0, res));
+		assert(evs.write(stderr, res));
 	end
-	evs.closesock(sock);
+	evs.close(sock);
 end
 
--- fork(netcat, "www.google.com");
--- fork(netcat, "www.topcheto.eu");
--- fork(netcat, "www.dir.bg");
+fork(netcat, "www.google.com");
+fork(netcat, "www.topcheto.eu");
+fork(netcat, "www.dir.bg");
 
--- fork(function ()
--- 	netcat "www.topcheto.eu";
--- 	netcat "www.google.com";
--- 	netcat "dir.bg";
--- end)
 
-local sig_printf = assert(ev.mksig(libc.printf, "i*ii"));
+if jit.os ~= "Windows" then
+	local sig_printf = assert(ev.mksig(libc.printf, "i*ii"));
 
--- fork(function ()
--- 	sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
--- 	coroutine.yield();
--- 	sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
--- 	coroutine.yield();
--- end);
-
--- fork(function ()
--- 	local base = monotime();
-
--- 	for i = 1, 20 do
--- 		sleep_until(base + i * .01);
--- 		print("====================> MS " .. i * 10);
--- 	end
--- end);
+	fork(function ()
+		sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
+		coroutine.yield();
+		sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
+		coroutine.yield();
+	end);
+end
 
 fork(function ()
-	local proc, proc_in, proc_out = assert(evs.spawn {
+	local base = monotime();
+
+	for i = 1, 20 do
+		sleep_until(base + i * .01);
+		print("====================> MS " .. i * 10);
+	end
+end);
+
+fork(function ()
+	local proc, proc_in, proc_out = assert(evs.proc_spawn {
 		stdin = "pipe",
+		-- stdin = "inherit",
 		stdout = "pipe",
+		-- stdout = "inherit",
 		stderr = "inherit",
-		argv = { "/bin/sort", "-" },
+		argv = ffi.os == "Windows" and { "./cat.exe", "-" } or { "/bin/sort" },
 		env = {},
 	});
 
-	assert(evs.write(proc_in, 0, "342\n"));
-	assert(evs.write(proc_in, 0, "12321\n"));
-	assert(evs.write(proc_in, 0, "6542\n"));
-	assert(evs.write(proc_in, 0, "123\n"));
-	evs.close(proc_in);
+	print(proc_in, proc_out)
 
-	while true do
-		local buff = evs.read(proc_out, 0, 1024);
-		if #buff == 0 then break end
-		io.stderr:write(buff);
-	end
+	fork(function ()
+		assert(evs.write(proc_in, "The quick brown fox jumped over the red dog\n"));
+		assert(evs.write(proc_in, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n"));
+		assert(evs.write(proc_in, "Integer consectetur mi a feugiat tempor.\n"));
+		assert(evs.write(proc_in, "Cras tincidunt diam at libero lacinia, ac fringilla metus malesuada.\n"));
+		evs.close(proc_in);
+	end);
 
-	print(assert(evs.wait(proc)));
+	fork(function ()
+		while true do
+			local buff = assert(evs.read(proc_out, 1024));
+			if #buff == 0 then break end
+			io.stderr:write(buff);
+		end
+		evs.close(proc_out);
+
+		print("EXIT CODE", assert(evs.proc_wait(proc)));
+	end);
 end);
 
 assert(run());
