@@ -141,13 +141,6 @@ typedef enum {
 	EV_POLL_TIMEOUT = -2,
 } ev_poll_res_t;
 
-// Gets the time, elapsed since the unix epoch (CLOCK_REALTIME)
-int ev_realtime(ev_time_t *pres);
-// Gets a reliably and monotonically ticking time, unaffected by the system time (CLOCK_MONOTONIC)
-// You should use this instead of `ev_realtime` when dealing with ev_poll's timeouts, and in general,
-// when you care about time offsets more than the actual current time, which is almost always the case
-int ev_monotime(ev_time_t *pres);
-
 // Adds the two times together
 ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
 // Subtracts the two times
@@ -201,9 +194,6 @@ ev_handle_t ev_stderr(ev_t ev);
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
 // Equivalent to posix's write
 ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
-// Unlike all other functions, close will complete synchronously, and will never error out
-// Equivalent to posix's close
-void ev_close(ev_t ev, ev_handle_t fd);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
@@ -227,14 +217,11 @@ ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
 ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
 ev_code_t ev_dir_next(ev_t ev, void *udata, ev_dir_t fd, char **pname);
-// Equivalent to posix's closedir
-void ev_dir_close(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
 ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
 // Equivalent to posix's accept
 ev_code_t ev_server_accept(ev_t ev, void *udata, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server);
-void ev_server_close(ev_t ev, ev_server_t server);
 
 // Equivalent to socket() + connect()
 ev_code_t ev_socket_connect(ev_t ev, void *udata, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
@@ -256,7 +243,31 @@ ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pco
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 // Gets a malloc'd string, representing the requested path
-ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
+ev_code_t evs_getpath(char **pres, ev_path_type_t type);
+
+// Gets an env variable from the current process
+ev_code_t evs_getenv(const char *name, char **pres);
+// Sets an env variable in the current process (if val is NULL, unsets it)
+ev_code_t evs_setenv(const char *name, const char *val);
+// Iterates all key-value env pairs and sets them to pit, as "KEY=VAL\0"
+// pit contains impl-specific iteration data. Passing the pointer, stored after an iteration more than once is UB
+// ppair is used to save the current pair, or NULL if the end of the list is reached
+// Modifying of the environment in between iterations leads to UB, and generally is a very, very bad idea
+ev_code_t evs_nextenv(void **pit, const char **ppair);
+
+// Gets the time, elapsed since the unix epoch (CLOCK_REALTIME)
+ev_code_t evs_realtime(ev_time_t *pres);
+// Gets a reliably and monotonically ticking time, unaffected by the system time (CLOCK_MONOTONIC)
+// You should use this instead of `ev_realtime` when dealing with ev_poll's timeouts, and in general,
+// when you care about time offsets more than the actual current time, which is almost always the case
+ev_code_t evs_monotime(ev_time_t *pres);
+
+// Sleeps until the monotone timestamp provided occurs
+void evs_sleep(ev_time_t time);
+
+void evs_close(ev_handle_t fd);
+void evs_dir_close(ev_dir_t dir);
+void evs_server_close(ev_server_t server);
 ]];
 
 local libev_dyn = ffi.load(jit.os == "Windows" and "./bin/Windows/libev-dyn.dll" or "./bin/Linux/libev-dyn.so");
@@ -320,17 +331,6 @@ local sleeps = {};
 
 local loop = libev.ev_init();
 
-local function realtime()
-	local pres = ffi.new "ev_time_t[1]";
-	assert(libev.ev_realtime(pres) == 0, "couldn't get realtime");
-	return assert(tonumber(pres[0].sec)) + assert(tonumber(pres[0].nsec)) / 1000000000;
-end
-local function monotime()
-	local pres = ffi.new "ev_time_t[1]";
-	assert(libev.ev_monotime(pres) == 0, "couldn't get realtime");
-	return assert(tonumber(pres[0].sec)) + assert(tonumber(pres[0].nsec)) / 1000000000;
-end
-
 local ev = {};
 
 local function call_wrap(func, cb, ...)
@@ -366,6 +366,17 @@ end
 local function invoke(handle, ...)
 	local ok, err = pinvoke(handle, ...);
 	if not ok then return error(err, 0) end
+end
+
+function ev.realtime()
+	local pres = ffi.new "ev_time_t[1]";
+	assert(libev.evs_realtime(pres) == 0, "couldn't get realtime");
+	return assert(tonumber(pres[0].sec)) + assert(tonumber(pres[0].nsec)) / 1000000000;
+end
+function ev.monotime()
+	local pres = ffi.new "ev_time_t[1]";
+	assert(libev.evs_monotime(pres) == 0, "couldn't get realtime");
+	return assert(tonumber(pres[0].sec)) + assert(tonumber(pres[0].nsec)) / 1000000000;
 end
 
 function ev.rawread(cb, sock, n, ptr)
@@ -405,9 +416,7 @@ function ev.write(cb, sock, str)
 		return invoke(cb, n);
 	end, sock, #str, buff);
 end
-function ev.close(fd)
-	return libev.ev_close(loop, fd);
-end
+ev.close = libev.evs_close;
 
 function ev.file_open(cb, path, flags, mode)
 	local pres = ffi.new "ev_handle_t[1]";
@@ -570,9 +579,7 @@ function ev.dir_next(cb, dir)
 
 	return call_wrap(libev.ev_dir_next, handle, dir, pname);
 end
-function ev.dir_close(dir)
-	libev.ev_dir_close(loop, dir);
-end
+ev.dir_close = libev.evs_dir_close;
 
 function ev.socket_connect(cb, addr, port, type)
 	local itype;
@@ -624,9 +631,7 @@ function ev.server_accept(cb, server)
 
 	return call_wrap(libev.ev_server_accept, handle, pres, paddr, pport, server);
 end
-function ev.server_close(dir)
-	libev.ev_server_close(loop, dir);
-end
+ev.server_close = libev.evs_server_close;
 
 function ev.getaddrinfo(cb, name, flags)
 	local pres = ffi.new "ev_addrinfo_t[1]";
@@ -656,17 +661,45 @@ function ev.getaddrinfo(cb, name, flags)
 
 	return call_wrap(libev.ev_getaddrinfo, handle, pres, name, flags);
 end
-function ev.getpath(cb, type)
+function ev.getpath(type)
 	local pres = ffi.new "char*[1]";
+	local code = libev.evs_getpath(pres, type);
 
-	local function handle(code)
-		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
-		local res = ffi.string(pres[0]);
-		libc.free(pres[0]);
-		return invoke(cb, res);
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
+
+	local res = ffi.string(pres[0]);
+	libc.free(pres[0]);
+	return res;
+end
+function ev.getenv(name)
+	local pres = ffi.new "char*[1]";
+	local code = libev.evs_getenv(name, pres);
+
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
+
+	local res = ffi.string(pres[0]);
+	libc.free(pres[0]);
+	return res;
+end
+function ev.setenv(name, val)
+	local code = libev.evs_setenv(name, val);
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
+	return true;
+end
+function ev.nextenv(pit, ...)
+	local pres = ffi.new "const char *[1]";
+
+	local code = libev.evs_nextenv(pit, pres);
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
+
+	if pres[0] == ffi.cast("void*", 0) then
+		return nil;
+	else
+		return ffi.string(pres[0]), pit;
 	end
-
-	return call_wrap(libev.ev_getpath, handle, pres, type);
+end
+function ev.iterenv()
+	return ev.nextenv, ffi.new "void *[1]";
 end
 
 --- @param str string
@@ -730,12 +763,14 @@ local evs = {
 	proc_wait = syncify(ev.proc_wait),
 
 	getaddrinfo = syncify(ev.getaddrinfo),
-	getpath = syncify(ev.getpath),
+	getpath = ev.getpath,
+	getenv = ev.getenv,
+	setenv = ev.setenv,
 };
 
 local function run()
 	while true do
-		local curr = monotime();
+		local curr = ev.monotime();
 
 		-- NOTE: this can be implemented as a sorted list, which would be MUCH faster for lots of concurrent sleeps, this is just the simplest logic
 		for i = #sleeps, 1, -1 do
@@ -836,13 +871,11 @@ local function netcat(url)
 	evs.close(sock);
 end
 
-fork(netcat, "www.google.com");
 fork(netcat, "www.topcheto.eu");
-fork(netcat, "www.dir.bg");
-
+fork(netcat, "www.example.org");
 
 if jit.os ~= "Windows" then
-	local sig_printf = assert(ev.mksig(libc.printf, "i*ii"));
+	local sig_printf = assert(ev.mksignature(libc.printf, "i*ii"));
 
 	fork(function ()
 		sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
@@ -853,7 +886,7 @@ if jit.os ~= "Windows" then
 end
 
 fork(function ()
-	local base = monotime();
+	local base = ev.monotime();
 
 	for i = 1, 20 do
 		sleep_until(base + i * .01);
@@ -893,6 +926,12 @@ fork(function ()
 		print("EXIT CODE", assert(evs.proc_wait(proc)));
 	end);
 end);
+
+fork(function ()
+	for pair in ev.iterenv() do
+		print(pair:match "(.-)=(.*)");
+	end
+end)
 
 assert(run());
 libev.ev_free(loop);

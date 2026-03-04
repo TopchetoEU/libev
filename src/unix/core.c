@@ -4,7 +4,9 @@
 #include "ev/conf.h"
 #include "ev.h"
 #include "ev/errno.h"
+#include "ev/sync.h"
 #include "./common.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,7 +103,7 @@ static int evi_unix_mkstd(int std_fd, int *pparent, int *pchild, ev_spawn_stdio_
 	return 0;
 }
 
-static ev_code_t evi_sync_read(ev_handle_t fd, char *buff, size_t *pn) {
+ev_code_t evs_read(ev_handle_t fd, char *buff, size_t *pn) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
 	ssize_t n = read(evi_unix_fd(fd), buff, *pn);
@@ -110,7 +112,7 @@ static ev_code_t evi_sync_read(ev_handle_t fd, char *buff, size_t *pn) {
 	*pn = n;
 	return EV_OK;
 }
-static ev_code_t evi_sync_write(ev_handle_t fd, char *buff, size_t *pn) {
+ev_code_t evs_write(ev_handle_t fd, char *buff, size_t *pn) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
 	ssize_t n = write(evi_unix_fd(fd), buff, *pn);
@@ -119,9 +121,7 @@ static ev_code_t evi_sync_write(ev_handle_t fd, char *buff, size_t *pn) {
 	*pn = n;
 	return EV_OK;
 }
-void ev_close(ev_t loop, ev_handle_t fd) {
-	(void)loop;
-
+void evs_close(ev_handle_t fd) {
 	if (evi_unix_isfd(fd)) {
 		while (close((int)(size_t)fd) < 0) {
 			if (errno != EINTR) return;
@@ -131,7 +131,7 @@ void ev_close(ev_t loop, ev_handle_t fd) {
 	evi_unix_freefd(fd);
 }
 
-static ev_code_t evi_sync_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	int fd = -1;
 
 	#ifdef EV_USE_LINUX
@@ -156,7 +156,7 @@ static ev_code_t evi_sync_file_open(ev_handle_t *pres, const char *path, ev_open
 	if (!*pres) return EV_ENOMEM;
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_stat(ev_handle_t fd, ev_stat_t *buff) {
+ev_code_t evs_file_stat(ev_handle_t fd, ev_stat_t *buff) {
 	struct stat res;
 
 	if (evi_unix_isfd(fd)) {
@@ -169,7 +169,7 @@ static ev_code_t evi_sync_file_stat(ev_handle_t fd, ev_stat_t *buff) {
 	evi_unix_conv_stat(buff, &res);
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
+ev_code_t evs_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
 	// Since our API doesn't work with seek pointers (as uring warrants that),
@@ -186,7 +186,7 @@ static ev_code_t evi_sync_file_read(ev_handle_t fd, char *buff, size_t *n, size_
 	*n = res;
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
+ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
 	ssize_t res;
@@ -201,22 +201,22 @@ static ev_code_t evi_sync_file_write(ev_handle_t fd, char *buff, size_t *n, size
 	*n = res;
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_sync(ev_handle_t fd) {
+ev_code_t evs_file_sync(ev_handle_t fd) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
 	return evi_unix_conv_errno(fsync(evi_unix_fd(fd)));
 }
 
-static ev_code_t evi_sync_dir_new(const char *path, int mode) {
+ev_code_t evs_dir_new(const char *path, int mode) {
 	if (mkdir(path, mode) < 0) return evi_unix_conv_errno(errno);
 	else return EV_OK;
 }
-static ev_code_t evi_sync_dir_open(ev_dir_t *pres, const char *path) {
+ev_code_t evs_dir_open(ev_dir_t *pres, const char *path) {
 	*pres = (ev_dir_t)opendir(path);
 	if (!*pres) return evi_unix_conv_errno(errno);
 	else return EV_OK;
 }
-static ev_code_t evi_sync_dir_next(ev_dir_t dir, char **pname) {
+ev_code_t evs_dir_next(ev_dir_t dir, char **pname) {
 	struct dirent *ent;
 
 	while (true) {
@@ -238,15 +238,13 @@ static ev_code_t evi_sync_dir_next(ev_dir_t dir, char **pname) {
 	strcpy(*pname, ent->d_name);
 	return EV_OK;
 }
-void ev_dir_close(ev_t loop, ev_dir_t dir) {
-	(void)loop;
-
+void evs_dir_close(ev_dir_t dir) {
 	while (closedir((DIR*)dir) < 0) {
 		if (errno != EINTR) return;
 	}
 }
 
-static ev_code_t evi_sync_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t evs_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	int sock = evi_unix_new_sock(proto, addr.type);
 	if (sock < 0) return evi_unix_conv_errno(errno);
 
@@ -258,7 +256,7 @@ static ev_code_t evi_sync_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev
 	*pres = evi_unix_mkfd(sock);
 	return EV_OK;
 }
-static ev_code_t evi_sync_server_bind(ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
+ev_code_t evs_server_bind(ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
 	int sock = evi_unix_new_sock(proto, addr.type);
 	if (sock < 0) return evi_unix_conv_errno(errno);
 
@@ -282,7 +280,7 @@ static ev_code_t evi_sync_server_bind(ev_server_t *pres, ev_proto_t proto, ev_ad
 	*pres = (void*)(size_t)sock;
 	return EV_OK;
 }
-static ev_code_t evi_sync_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
+ev_code_t evs_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
 	struct sockaddr_storage addr = {};
 	socklen_t addr_len = sizeof addr;
 
@@ -293,13 +291,12 @@ static ev_code_t evi_sync_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uin
 	*pres = evi_unix_mkfd(client);
 	return EV_OK;
 }
-void ev_server_close(ev_t ev, ev_server_t server) {
-	(void)ev;
+void evs_server_close(ev_server_t server) {
 	close((int)(size_t)server);
 }
 
 // Equivalent to posix's fork then exec
-static ev_code_t evi_sync_spawn(
+ev_code_t evs_proc_spawn(
 	ev_proc_t *pres,
 	const char **argv, const char **env,
 	const char *cwd,
@@ -397,7 +394,7 @@ err_status_pipe:
 err:
 	return evi_unix_conv_errno(errno);
 }
-ev_code_t evi_sync_wait(ev_proc_t proc, int *psig, int *pcode) {
+ev_code_t evs_proc_wait(ev_proc_t proc, int *psig, int *pcode) {
 	int status;
 	if (waitpid((pid_t)(size_t)proc, &status, 0) < 0)  return evi_unix_conv_errno(errno);
 
@@ -414,7 +411,7 @@ ev_code_t evi_sync_wait(ev_proc_t proc, int *psig, int *pcode) {
 	return 0;
 }
 
-static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
+ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	struct addrinfo hints = { 0 };
 
 	if (flags & EV_AI_IPV4_MAPPED) hints.ai_flags |= EV_AI_IPV4_MAPPED;
@@ -477,7 +474,7 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 	*pres = res;
 	return EV_OK;
 }
-static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
+ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
 			char *res = evi_unix_gethome(NULL);
@@ -546,25 +543,61 @@ static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
 	return EV_EINVAL;
 }
 
-static void evi_sleep(ev_time_t time) {
-	struct timespec req = { .tv_sec = time.sec, .tv_nsec = time.nsec };
-	while (true) {
-		if (nanosleep(&req, NULL) == 0) break;
-		if (errno == EINTR) continue;
+ev_code_t evs_getenv(const char *name, char **pres) {
+	const char *val = getenv(name);
+	if (!val) {
+		*pres = NULL;
+		return EV_OK;
 	}
+
+	char *res = malloc(strlen(val) + 1);
+	if (!res) return EV_ENOMEM;
+
+	strcpy(res, val);
+	*pres = res;
+	return EV_OK;
+}
+ev_code_t evs_setenv(const char *name, const char *val) {
+	if (!val) {
+		if (unsetenv(name) < 0) return evi_unix_conv_errno(errno);
+	}
+	else {
+		if (setenv(name, val, true) < 0) return evi_unix_conv_errno(errno);
+	}
+
+	return EV_OK;
+}
+ev_code_t evs_nextenv(void **pit, const char **ppair) {
+	char **it = *pit;
+	if (!it) it = environ;
+
+	char *pair = *it;
+	if (pair) it++;
+
+	*pit = it;
+	*ppair = pair;
+	return EV_OK;
 }
 
-int ev_realtime(ev_time_t *pres) {
+ev_code_t evs_realtime(ev_time_t *pres) {
 	struct timespec res;
 	if (clock_gettime(CLOCK_REALTIME, &res) < 0) return -1;
 	*pres = (ev_time_t) { .sec = res.tv_sec, .nsec = res.tv_nsec };
 	return EV_OK;
 }
-int ev_monotime(ev_time_t *pres) {
+ev_code_t evs_monotime(ev_time_t *pres) {
 	struct timespec res;
 	if (clock_gettime(CLOCK_MONOTONIC, &res) < 0) return -1;
 	*pres = (ev_time_t) { .sec = res.tv_sec, .nsec = res.tv_nsec };
 	return EV_OK;
+}
+
+void evs_sleep(ev_time_t time) {
+	struct timespec req = { .tv_sec = time.sec, .tv_nsec = time.nsec };
+	while (true) {
+		if (nanosleep(&req, NULL) == 0) break;
+		if (errno == EINTR) continue;
+	}
 }
 
 static ev_code_t evi_stdio_init(ev_handle_t *in, ev_handle_t *out, ev_handle_t *err) {

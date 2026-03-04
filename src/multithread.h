@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ev/conf.h"
+#include "ev/sync.h"
 #include "ev.h"
 #include "ev/errno.h"
 #include <assert.h>
@@ -29,7 +30,7 @@
 	#define ev_cond_wait(cond, mut) (void)SleepConditionVariableCS(cond, mut, INFINITE)
 	static inline ev_code_t ev_cond_timewait(ev_cond_t cond, ev_mutex_t mut, ev_time_t timeout) {
 		ev_time_t curr;
-		ev_monotime(&curr);
+		evs_monotime(&curr);
 
 		int64_t ms = ev_timems(ev_timesub(timeout, curr));
 		if (ms < 0) ms = 0;

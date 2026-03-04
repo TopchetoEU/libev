@@ -27,6 +27,10 @@ struct ev_hnd {
 	};
 };
 
+typedef struct {
+	char *data, *curr;
+} *evi_win_nextenv_udata_t;
+
 static ev_handle_t evi_win_mkhnd(HANDLE hnd) {
 	ev_handle_t res = malloc(sizeof *res);
 	if (!res) return NULL;

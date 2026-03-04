@@ -1,8 +1,10 @@
 #pragma once
+#include <stddef.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 
 #include "ev/conf.h"
 #include "ev/errno.h"
+#include "ev/sync.h"
 #include "ev.h"
 #include "common.h"
 
@@ -156,7 +158,7 @@ static char *evi_win_envp_to_envblock(const char **envp) {
 	return buff;
 }
 
-static ev_code_t evi_sync_read(ev_handle_t fd, char *buff, size_t *pn) {
+ev_code_t evs_read(ev_handle_t fd, char *buff, size_t *pn) {
 	switch (fd->kind) {
 		case EVI_WIN_HND: {
 			DWORD out_n;
@@ -182,7 +184,7 @@ static ev_code_t evi_sync_read(ev_handle_t fd, char *buff, size_t *pn) {
 		default: return EV_EBADF;
 	}
 }
-static ev_code_t evi_sync_write(ev_handle_t fd, char *buff, size_t *pn) {
+ev_code_t evs_write(ev_handle_t fd, char *buff, size_t *pn) {
 	switch (fd->kind) {
 		case EVI_WIN_HND: {
 			DWORD out_n;
@@ -208,8 +210,7 @@ static ev_code_t evi_sync_write(ev_handle_t fd, char *buff, size_t *pn) {
 		default: return EV_EBADF;
 	}
 }
-void ev_close(ev_t ev, ev_handle_t fd) {
-	(void)ev;
+void evs_close(ev_handle_t fd) {
 	switch (fd->kind) {
 		case EVI_WIN_HND:
 			CloseHandle(fd->hnd);
@@ -220,7 +221,7 @@ void ev_close(ev_t ev, ev_handle_t fd) {
 	}
 }
 
-static ev_code_t evi_sync_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	(void)mode;
 	DWORD access = 0;
 	DWORD access_others = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
@@ -267,7 +268,7 @@ static ev_code_t evi_sync_file_open(ev_handle_t *pres, const char *path, ev_open
 	*pres = evi_win_mkhnd(hnd);
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_read(ev_handle_t fd, const char *buff, size_t *n, size_t offset) {
+ev_code_t evs_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
 
 	DWORD out_n;
@@ -284,7 +285,7 @@ static ev_code_t evi_sync_file_read(ev_handle_t fd, const char *buff, size_t *n,
 	*n = out_n;
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
+ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
 
 	DWORD out_n;
@@ -301,12 +302,12 @@ static ev_code_t evi_sync_file_write(ev_handle_t fd, char *buff, size_t *n, size
 	*n = out_n;
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_sync(ev_handle_t fd) {
+ev_code_t evs_file_sync(ev_handle_t fd) {
 	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
 	if (!FlushFileBuffers(fd->hnd)) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
-static ev_code_t evi_sync_file_stat(ev_handle_t fd, ev_stat_t *buff) {
+ev_code_t evs_file_stat(ev_handle_t fd, ev_stat_t *buff) {
 	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
 
 	BY_HANDLE_FILE_INFORMATION info;
@@ -354,12 +355,12 @@ static ev_code_t evi_sync_file_stat(ev_handle_t fd, ev_stat_t *buff) {
 	return EV_OK;
 }
 
-static ev_code_t evi_sync_dir_new(const char *path, int mode) {
+ev_code_t evs_dir_new(const char *path, int mode) {
 	(void)mode;
 	if (!CreateDirectory(path, NULL)) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
-static ev_code_t evi_sync_dir_open(ev_dir_t *pres, const char *path) {
+ev_code_t evs_dir_open(ev_dir_t *pres, const char *path) {
 	char *pattern = malloc(strlen(path) + 3);
 	if (!pattern) return EV_ENOMEM;
 
@@ -381,7 +382,7 @@ static ev_code_t evi_sync_dir_open(ev_dir_t *pres, const char *path) {
 	*pres = res;
 	return EV_OK;
 }
-static ev_code_t evi_sync_dir_next(ev_dir_t dir, char **pname) {
+ev_code_t evs_dir_next(ev_dir_t dir, char **pname) {
 	while (true) {
 		if (dir->done) {
 			*pname = NULL;
@@ -403,13 +404,12 @@ static ev_code_t evi_sync_dir_next(ev_dir_t dir, char **pname) {
 		return EV_OK;
 	}
 }
-void ev_dir_close(ev_t ev, ev_dir_t dir) {
-	(void)ev;
+void evs_dir_close(ev_dir_t dir) {
 	FindClose(dir->hnd);
 	free(dir);
 }
 
-static ev_code_t evi_sync_server_bind(ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
+ev_code_t evs_server_bind(ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
 	SOCKET sock = evi_win_sock_new(proto, addr.type);
 	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
 
@@ -433,7 +433,7 @@ static ev_code_t evi_sync_server_bind(ev_server_t *pres, ev_proto_t proto, ev_ad
 	*pres = (void*)(size_t)sock;
 	return EV_OK;
 }
-static ev_code_t evi_sync_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
+ev_code_t evs_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
 	struct sockaddr_storage addr = {};
 	socklen_t addr_len = sizeof addr;
 
@@ -445,12 +445,11 @@ static ev_code_t evi_sync_server_accept(ev_handle_t *pres, ev_addr_t *paddr, uin
 	*pres = (void*)(size_t)client;
 	return EV_OK;
 }
-void ev_server_close(ev_t ev, ev_server_t server) {
-	(void)ev;
+void evs_server_close(ev_server_t server) {
 	closesocket((SOCKET)(size_t)server);
 }
 
-static ev_code_t evi_sync_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+ev_code_t evs_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
 	SOCKET sock = evi_win_sock_new(proto, addr.type);
 	if (sock == INVALID_SOCKET) return evi_win_conv_errno(WSAGetLastError());
 
@@ -463,7 +462,7 @@ static ev_code_t evi_sync_socket_connect(ev_handle_t *pres, ev_proto_t proto, ev
 	return EV_OK;
 }
 
-static int evi_sync_spawn(
+ev_code_t evs_proc_spawn(
 	ev_proc_t *pres,
 	const char **argv, const char **envp,
 	const char *cwd,
@@ -537,7 +536,7 @@ err_in_pipe:
 err:
 	return evi_win_conv_errno(GetLastError());
 }
-ev_code_t evi_sync_wait(ev_proc_t proc, int *psig, int *pcode) {
+ev_code_t evs_proc_wait(ev_proc_t proc, int *psig, int *pcode) {
 	switch (WaitForSingleObject(proc, INFINITE)) {
 		case WAIT_ABANDONED:
 			return EV_EDEADLK;
@@ -560,7 +559,7 @@ ev_code_t evi_sync_wait(ev_proc_t proc, int *psig, int *pcode) {
 	return 0;
 }
 
-static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
+ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
 	struct addrinfo hints = { 0 };
 
 	if (flags & EV_AI_IPV4_MAPPED) hints.ai_flags |= EV_AI_IPV4_MAPPED;
@@ -626,7 +625,7 @@ static ev_code_t evi_sync_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_
 	*pres = res;
 	return EV_OK;
 }
-static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
+ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
 			char *res = evi_win_getpath(CSIDL_PROFILE, NULL);
@@ -671,17 +670,73 @@ static ev_code_t evi_sync_getpath(char **pres, ev_path_type_t type) {
 	return EV_EINVAL;
 }
 
-static void evi_sleep(ev_time_t time) {
-	Sleep(ev_timems(time));
+ev_code_t evs_getenv(const char *name, char **pres) {
+	int n = GetEnvironmentVariable(name, NULL, 0);
+	if (!n) {
+		if (GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
+			*pres = NULL;
+			return EV_OK;
+		}
+
+		return evi_win_conv_errno(GetLastError());
+	}
+
+	char *buff = malloc(n);
+	if (!buff) return EV_ENOMEM;
+
+	if (!GetEnvironmentVariable(name, buff, n)) {
+		free(buff);
+		return evi_win_conv_errno(GetLastError());
+	}
+
+	*pres = buff;
+	return EV_OK;
+}
+ev_code_t evs_setenv(const char *name, const char *val) {
+	if (!SetEnvironmentVariable(name, val)) return evi_win_conv_errno(GetLastError());
+	return EV_OK;
+}
+ev_code_t evs_nextenv(void **pit, const char **ppair) {
+	if (*pit == (void*)-1) {
+		*ppair = NULL;
+		return EV_OK;
+	}
+	evi_win_nextenv_udata_t it = *pit;
+
+	if (!it) {
+		it = malloc(sizeof *it);
+		if (!it) return EV_ENOMEM;
+
+		it->data = it->curr = GetEnvironmentStrings();
+		if (!it->data) {
+			free(it);
+			return evi_win_conv_errno(GetLastError());
+		}
+	}
+
+	size_t n = strlen(it->curr);
+	if (n == 0) {
+		FreeEnvironmentStrings(it->data);
+		free(it);
+
+		*pit = (void*)-1;
+		*ppair = NULL;
+		return EV_OK;
+	}
+
+	*pit = it;
+	*ppair = it->curr;
+	it->curr += n + 1;
+	return EV_OK;
 }
 
-int ev_realtime(ev_time_t *pres) {
+ev_code_t evs_realtime(ev_time_t *pres) {
 	FILETIME time;
 	GetSystemTimePreciseAsFileTime(&time);
 	*pres = evi_win_conv_filetime(time);
 	return EV_OK;
 }
-int ev_monotime(ev_time_t *pres) {
+ev_code_t evs_monotime(ev_time_t *pres) {
 	LARGE_INTEGER counter, freq;
 	QueryPerformanceCounter(&counter);
 	QueryPerformanceFrequency(&freq);
@@ -693,6 +748,10 @@ int ev_monotime(ev_time_t *pres) {
 
 
 	return EV_OK;
+}
+
+void evs_sleep(ev_time_t time) {
+	Sleep(ev_timems(time));
 }
 
 static int evi_stdio_init(ev_handle_t *in, ev_handle_t *out, ev_handle_t *err) {

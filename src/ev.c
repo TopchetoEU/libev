@@ -498,7 +498,6 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **pudata, int *perr) {
 	ev_mutex_lock(ev->lock);
 
-
 	while (!ev->next_msg && wait) {
 		#ifdef EV_USE_MULTITHREAD
 			if (ptimeout) {
@@ -512,7 +511,7 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **puda
 			}
 		#else
 			if (ptimeout) {
-				evi_sleep(*ptimeout);
+				evs_sleep(*ptimeout);
 			}
 			else {
 				// In non-threaded mode, it is impossible for us to get a message while we're blocked
@@ -536,7 +535,7 @@ ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **puda
 	return EV_POLL_OK;
 }
 
-// IO OPS
+// ASYNC IO WRAPPERS
 
 typedef struct { ev_handle_t fd; char *buff; size_t *pn; } evi_rw_args_t;
 
@@ -572,76 +571,76 @@ typedef struct { ev_proc_t proc; } evi_disown_args_t;
 static int evi_read_worker(void *pargs) {
 	evi_rw_args_t args = *(evi_rw_args_t*)pargs;
 	free(pargs);
-	return evi_sync_read(args.fd, args.buff, args.pn);
+	return evs_read(args.fd, args.buff, args.pn);
 }
 static int evi_write_worker(void *pargs) {
 	evi_rw_args_t args = *(evi_rw_args_t*)pargs;
 	free(pargs);
-	return evi_sync_write(args.fd, args.buff, args.pn);
+	return evs_write(args.fd, args.buff, args.pn);
 }
 
 static int evi_file_open_worker(void *pargs) {
 	evi_file_open_args_t args = *(evi_file_open_args_t*)pargs;
 	free(pargs);
-	return evi_sync_file_open(args.pres, args.path, args.flags, args.mode);
+	return evs_file_open(args.pres, args.path, args.flags, args.mode);
 }
 static int evi_file_read_worker(void *pargs) {
 	evi_file_rw_args_t args = *(evi_file_rw_args_t*)pargs;
 	free(pargs);
-	return evi_sync_file_read(args.fd, args.buff, args.n, args.offset);
+	return evs_file_read(args.fd, args.buff, args.n, args.offset);
 }
 static int evi_file_write_worker(void *pargs) {
 	evi_file_rw_args_t args = *(evi_file_rw_args_t*)pargs;
 	free(pargs);
-	return evi_sync_file_write(args.fd, args.buff, args.n, args.offset);
+	return evs_file_write(args.fd, args.buff, args.n, args.offset);
 }
 static int evi_file_sync_worker(void *pargs) {
 	evi_file_sync_args_t args = *(evi_file_sync_args_t*)pargs;
 	free(pargs);
-	return evi_sync_file_sync(args.fd);
+	return evs_file_sync(args.fd);
 }
 static int evi_file_stat_worker(void *pargs) {
 	evi_file_stat_args_t args = *(evi_file_stat_args_t*)pargs;
 	free(pargs);
-	return evi_sync_file_stat(args.fd, args.buff);
+	return evs_file_stat(args.fd, args.buff);
 }
 
 static int evi_dir_new_worker(void *pargs) {
 	evi_dir_new_args_t args = *(evi_dir_new_args_t*)pargs;
 	free(pargs);
-	return evi_sync_dir_new(args.path, args.mode);
+	return evs_dir_new(args.path, args.mode);
 }
 static int evi_dir_open_worker(void *pargs) {
 	evi_dir_open_args_t args = *(evi_dir_open_args_t*)pargs;
 	free(pargs);
-	return evi_sync_dir_open(args.pres, args.path);
+	return evs_dir_open(args.pres, args.path);
 }
 static int evi_dir_next_worker(void *pargs) {
 	evi_dir_next_args_t args = *(evi_dir_next_args_t*)pargs;
 	free(pargs);
-	return evi_sync_dir_next(args.dir, args.pname);
+	return evs_dir_next(args.dir, args.pname);
 }
 
 static int evi_socket_connect_worker(void *pargs) {
 	evi_socket_connect_args_t args = *(evi_socket_connect_args_t*)pargs;
 	free(pargs);
-	return evi_sync_socket_connect(args.pres, args.proto, args.addr, args.port);
+	return evs_socket_connect(args.pres, args.proto, args.addr, args.port);
 }
 static int evi_bind_worker(void *pargs) {
 	evi_server_bind_args_t args = *(evi_server_bind_args_t*)pargs;
 	free(pargs);
-	return evi_sync_server_bind(args.pres, args.proto, args.addr, args.port, args.max_n);
+	return evs_server_bind(args.pres, args.proto, args.addr, args.port, args.max_n);
 }
 static int evi_accept_worker(void *pargs) {
 	evi_server_accept_args_t args = *(evi_server_accept_args_t*)pargs;
 	free(pargs);
-	return evi_sync_server_accept(args.pres, args.paddr, args.pport, args.server);
+	return evs_server_accept(args.pres, args.paddr, args.pport, args.server);
 }
 
 static int evi_spawn_worker(void *pargs) {
 	evi_spawn_args_t args = *(evi_spawn_args_t*)pargs;
 	free(pargs);
-	return evi_sync_spawn(
+	return evs_proc_spawn(
 		args.pres,
 		args.argv,
 		args.env,
@@ -657,19 +656,13 @@ static int evi_spawn_worker(void *pargs) {
 static int evi_wait_worker(void *pargs) {
 	evi_wait_args_t args = *(evi_wait_args_t*)pargs;
 	free(pargs);
-	return evi_sync_wait(args.proc, args.psig, args.pcode);
+	return evs_proc_wait(args.proc, args.psig, args.pcode);
 }
 
 static int evi_getaddrinfo_worker(void *pargs) {
 	evi_getaddrinfo_args_t args = *(evi_getaddrinfo_args_t*)pargs;
 	free(pargs);
-	return evi_sync_getaddrinfo(args.pres, args.name, args.flags);
-}
-static int evi_getpath_worker(void *pargs) {
-	evi_getpath_args_t args = *(evi_getpath_args_t*)pargs;
-	free(pargs);
-	return evi_sync_getpath(args.pres, args.type);
-	// return 0;
+	return evs_getaddrinfo(args.pres, args.name, args.flags);
 }
 
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t handle, char *buff, size_t *pn) {
@@ -879,14 +872,6 @@ ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *
 	pargs->name = name;
 	pargs->flags = flags;
 	return ev_exec(ev, udata, evi_getaddrinfo_worker, pargs, false);
-}
-ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type) {
-	evi_getpath_args_t *pargs = malloc(sizeof *pargs);
-	if (!pargs) return EV_ENOMEM;
-
-	pargs->pres = pres;
-	pargs->type = type;
-	return ev_exec(ev, udata, evi_getpath_worker, pargs, false);
 }
 
 ev_handle_t ev_stdin(ev_t ev) {

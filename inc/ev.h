@@ -127,13 +127,6 @@ typedef enum {
 	EV_POLL_TIMEOUT = -2,
 } ev_poll_res_t;
 
-// Gets the time, elapsed since the unix epoch (CLOCK_REALTIME)
-int ev_realtime(ev_time_t *pres);
-// Gets a reliably and monotonically ticking time, unaffected by the system time (CLOCK_MONOTONIC)
-// You should use this instead of `ev_realtime` when dealing with ev_poll's timeouts, and in general,
-// when you care about time offsets more than the actual current time, which is almost always the case
-int ev_monotime(ev_time_t *pres);
-
 // Adds the two times together
 ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
 // Subtracts the two times
@@ -187,9 +180,6 @@ ev_handle_t ev_stderr(ev_t ev);
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
 // Equivalent to posix's write
 ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
-// Unlike all other functions, close will complete synchronously, and will never error out
-// Equivalent to posix's close
-void ev_close(ev_t ev, ev_handle_t fd);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
@@ -213,14 +203,11 @@ ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
 ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
 ev_code_t ev_dir_next(ev_t ev, void *udata, ev_dir_t fd, char **pname);
-// Equivalent to posix's closedir
-void ev_dir_close(ev_t ev, ev_dir_t fd);
 
 // Equivalent to socket() + bind()
 ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
 // Equivalent to posix's accept
 ev_code_t ev_server_accept(ev_t ev, void *udata, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server);
-void ev_server_close(ev_t ev, ev_server_t server);
 
 // Equivalent to socket() + connect()
 ev_code_t ev_socket_connect(ev_t ev, void *udata, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port);
@@ -241,7 +228,5 @@ ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pco
 
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
-// Gets a malloc'd string, representing the requested path
-ev_code_t ev_getpath(ev_t ev, void *udata, char **pres, ev_path_type_t type);
 
 #endif
