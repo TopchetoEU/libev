@@ -194,6 +194,10 @@ ev_handle_t ev_stderr(ev_t ev);
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
 // Equivalent to posix's write
 ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Equivalent to posix's sync
+ev_code_t ev_sync(ev_t ev, void *udata, ev_handle_t fd);
+// Equivalent to posix's stat
+ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
@@ -206,10 +210,6 @@ ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
 // Equivalent to posix's pwrite
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
-// Equivalent to posix's sync
-ev_code_t ev_file_sync(ev_t ev, void *udata, ev_handle_t fd);
-// Equivalent to posix's stat
-ev_code_t ev_file_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 
 // Equivalent to posix's mkdir
 ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
@@ -465,7 +465,7 @@ function ev.file_write(cb, fd, offset, str)
 		return invoke(cb, n);
 	end, fd, offset, #str, buff);
 end
-function ev.file_stat(cb, fd)
+function ev.stat(cb, fd)
 	local pbuff = ffi.new "ev_stat_t[1]";
 
 	local function handle(code)
@@ -473,7 +473,7 @@ function ev.file_stat(cb, fd)
 		return invoke(cb, pbuff[0]);
 	end
 
-	return call_wrap(libev.ev_file_stat, handle, fd, pbuff);
+	return call_wrap(libev.ev_stat, handle, fd, pbuff);
 end
 
 function ev.proc_spawn(cb, opts)
@@ -747,7 +747,7 @@ local evs = {
 	file_rawwrite = syncify(ev.file_rawwrite),
 	file_read = syncify(ev.file_read),
 	file_write = syncify(ev.file_write),
-	file_stat = syncify(ev.file_stat),
+	stat = syncify(ev.stat),
 
 	dir_new = syncify(ev.dir_new),
 	dir_open = syncify(ev.dir_open),

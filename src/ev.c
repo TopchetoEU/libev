@@ -738,7 +738,7 @@ ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t
 		return ev_exec(ev, udata, evi_file_write_worker, pargs, false);
 	#endif
 }
-ev_code_t ev_file_sync(ev_t ev, void *udata, ev_handle_t fd) {
+ev_code_t ev_sync(ev_t ev, void *udata, ev_handle_t fd) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
 		return evi_uring_file_sync(ev->uring, udata, fd);
@@ -750,7 +750,7 @@ ev_code_t ev_file_sync(ev_t ev, void *udata, ev_handle_t fd) {
 		return ev_exec(ev, udata, evi_file_sync_worker, pargs, false);
 	#endif
 }
-ev_code_t ev_file_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff) {
+ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
 		return evi_uring_file_stat(ev->uring, udata, fd, buff);

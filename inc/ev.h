@@ -176,26 +176,32 @@ ev_handle_t ev_stdout(ev_t ev);
 // Returns a reference to the stderr stream
 ev_handle_t ev_stderr(ev_t ev);
 
-// Equivalent to posix's read
-ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
-// Equivalent to posix's write
-ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
 
-// Exceptions to the model are the ev_close and ev_closedir functions, which are synchronous - this makes them fit to be called in a GC
+// A handle roughly equates to a fd (or a windows HANDLE/socket). Such may be an opened file, socket, tty or a pipe.
+
+// Equivalent to posix's read
+ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Equivalent to posix's write
+ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
+// Equivalent to posix's sync
+ev_code_t ev_sync(ev_t ev, void *udata, ev_handle_t fd);
+// Equivalent to posix's stat
+ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
+
+// File-specific functions. They must be exclusively used on handles, generated from ev(s)_file_open.
+// Mixing the file and generic RW functions on a file handle will work as expected (the generic handles will read
+// the file as a stream, as if the file operations aren't occurring)
+// Using a file RW operation on a non-file handle is UB, but will either succeed "weirdly" or fail with an error of an invalid seek. Don't do it!
 
 // Equivalent to posix's open
 ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
-// Equivalent to posix's pread
+// A file-specific read function
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
-// Equivalent to posix's pwrite
+// A file-specific write function
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
-// Equivalent to posix's sync
-ev_code_t ev_file_sync(ev_t ev, void *udata, ev_handle_t fd);
-// Equivalent to posix's stat
-ev_code_t ev_file_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 
 // Equivalent to posix's mkdir
 ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
@@ -203,6 +209,8 @@ ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
 ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
 ev_code_t ev_dir_next(ev_t ev, void *udata, ev_dir_t fd, char **pname);
+
+// Unlike posix, I decided it would make sense to split off bound sockets from connected sockets, as the two have completely different usages
 
 // Equivalent to socket() + bind()
 ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
