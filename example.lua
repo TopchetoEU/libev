@@ -20,7 +20,6 @@ local libev = ffi.load(jit.os == "Windows" and "./bin/Windows/libev.dll" or "./b
 ffi.cdef [[
 #line 13
 
-
 typedef struct ev *ev_t;
 
 // Used to deploy a sync workload in an ev-managed thread
@@ -135,16 +134,12 @@ typedef struct {
 	uint32_t links;
 } ev_stat_t;
 
-typedef enum {
-	EV_POLL_OK,
-	EV_POLL_EMPTY = -1,
-	EV_POLL_TIMEOUT = -2,
-} ev_poll_res_t;
-
 // Adds the two times together
 ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
 // Subtracts the two times
 ev_time_t ev_timesub(ev_time_t a, ev_time_t b);
+// Compares both timestamps, in a strcmp fashion
+int ev_timecmp(ev_time_t a, ev_time_t b);
 // Converts the time to a millisecond count
 int64_t ev_timems(ev_time_t time);
 
@@ -175,13 +170,13 @@ ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err);
 // sync - if true, will side-step the thread pool and will instead call the worker immediately
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync);
 
-// Gets the next message in the message queue
-// If the queue is empty:
-//     If the loop is closed, returns EV_POLL_EMPTY and frees the loop
-//     If block is false, returns EV_POLL_EMPTY
-//     If block is true, blocks until a message is available and returns it
-// If ptimeout is not NULL and is reached, EV_POLL_TIMEOUT is returned. ptimeout is relative to the monotonic clock
-ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, void **pudata, int *perr);
+// Gets the next message in the message queue, or times out when ptimeout occurs, if not NULL
+// You may run this function in three modes: peeking, timed or polling
+// - peeking - by setting ptimeout to a time that has already occurred, you effectively check if a message exists, without blocking
+// - timed - by setting ptimeout to any future time, the function will either return a message or timeout, hence acting as a timer
+// - polling - by setting ptimeout to NULL, the function will never timeout, hence you will be polling for just a message
+// If a message was delivered, true is returned. If timed out, false is returned
+bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pudata, int *perr);
 
 // Returns a reference to the stdin stream
 ev_handle_t ev_stdin(ev_t ev);
@@ -189,6 +184,12 @@ ev_handle_t ev_stdin(ev_t ev);
 ev_handle_t ev_stdout(ev_t ev);
 // Returns a reference to the stderr stream
 ev_handle_t ev_stderr(ev_t ev);
+
+
+// These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
+// All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
+
+// A handle roughly equates to a fd (or a windows HANDLE/socket). Such may be an opened file, socket, tty or a pipe.
 
 // Equivalent to posix's read
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
@@ -199,16 +200,16 @@ ev_code_t ev_sync(ev_t ev, void *udata, ev_handle_t fd);
 // Equivalent to posix's stat
 ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 
-// These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
-// All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
-
-// Exceptions to the model are the ev_close and ev_closedir functions, which are synchronous - this makes them fit to be called in a GC
+// File-specific functions. They must be exclusively used on handles, generated from ev(s)_file_open.
+// Mixing the file and generic RW functions on a file handle will work as expected (the generic handles will read
+// the file as a stream, as if the file operations aren't occurring)
+// Using a file RW operation on a non-file handle is UB, but will either succeed "weirdly" or fail with an error of an invalid seek. Don't do it!
 
 // Equivalent to posix's open
 ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
-// Equivalent to posix's pread
+// A file-specific read function
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
-// Equivalent to posix's pwrite
+// A file-specific write function
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 
 // Equivalent to posix's mkdir
@@ -217,6 +218,8 @@ ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
 ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
 ev_code_t ev_dir_next(ev_t ev, void *udata, ev_dir_t fd, char **pname);
+
+// Unlike posix, I decided it would make sense to split off bound sockets from connected sockets, as the two have completely different usages
 
 // Equivalent to socket() + bind()
 ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n);
@@ -239,6 +242,9 @@ ev_code_t ev_proc_spawn(
 // psig is set to the signal that terminated the child, or -1 if not terminated by a signal
 // pcode is set to the exit code of the app, or -1 if child did not exit with a code
 ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode);
+
+// Equivalent to posix's getaddrinfo (with a few simplifications)
+ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
@@ -499,7 +505,7 @@ function ev.proc_spawn(cb, opts)
 		return res;
 	end
 
-	local argv = ffi.cast("const char**", libc.malloc(ffi.sizeof("const char**", #opts.argv + 1)));
+	local argv = ffi.cast("const char**", libc.malloc(ffi.sizeof "const char*" * (#opts.argv + 1)));
 	for i = 1, #opts.argv do
 		argv[i - 1] = stddup(opts.argv[i]);
 	end
@@ -511,7 +517,7 @@ function ev.proc_spawn(cb, opts)
 		env_key_n = env_key_n + 1;
 	end
 
-	local env = ffi.cast("const char**", libc.malloc(ffi.sizeof("const char**", #opts.env + env_key_n + 1)));
+	local env = ffi.cast("const char**", libc.malloc(ffi.sizeof "const char**" * (#opts.env + env_key_n + 1)));
 
 	local function handle(code)
 		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
@@ -806,8 +812,7 @@ local function run()
 
 		local pudata = ffi.new "void*[1]";
 		local perr = ffi.new "int[1]";
-		local code = assert(tonumber(libev.ev_poll(loop, true, ptimeout, pudata, perr)));
-		if code == 0 then
+		if libev.ev_poll(loop, ptimeout, pudata, perr) then
 			local ticket = assert(tonumber(ffi.cast("size_t", pudata[0])), "invalid ticket");
 			local handle = handles[ticket];
 			handles[ticket] = nil;
@@ -888,7 +893,7 @@ end
 fork(function ()
 	local base = ev.monotime();
 
-	for i = 1, 20 do
+	for i = 1, 50 do
 		sleep_until(base + i * .01);
 		print("====================> MS " .. i * 10);
 	end
@@ -931,7 +936,7 @@ fork(function ()
 	for pair in ev.iterenv() do
 		print(pair:match "(.-)=(.*)");
 	end
-end)
+end);
 
 assert(run());
 libev.ev_free(loop);

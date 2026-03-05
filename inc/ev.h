@@ -121,16 +121,12 @@ typedef struct {
 	uint32_t links;
 } ev_stat_t;
 
-typedef enum {
-	EV_POLL_OK,
-	EV_POLL_EMPTY = -1,
-	EV_POLL_TIMEOUT = -2,
-} ev_poll_res_t;
-
 // Adds the two times together
 ev_time_t ev_timeadd(ev_time_t a, ev_time_t b);
 // Subtracts the two times
 ev_time_t ev_timesub(ev_time_t a, ev_time_t b);
+// Compares both timestamps, in a strcmp fashion
+int ev_timecmp(ev_time_t a, ev_time_t b);
 // Converts the time to a millisecond count
 int64_t ev_timems(ev_time_t time);
 
@@ -161,13 +157,13 @@ ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err);
 // sync - if true, will side-step the thread pool and will instead call the worker immediately
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync);
 
-// Gets the next message in the message queue
-// If the queue is empty:
-//     If the loop is closed, returns EV_POLL_EMPTY and frees the loop
-//     If block is false, returns EV_POLL_EMPTY
-//     If block is true, blocks until a message is available and returns it
-// If ptimeout is not NULL and is reached, EV_POLL_TIMEOUT is returned. ptimeout is relative to the monotonic clock
-ev_poll_res_t ev_poll(ev_t ev, bool block, const ev_time_t *ptimeout, void **pudata, int *perr);
+// Gets the next message in the message queue, or times out when ptimeout occurs, if not NULL
+// You may run this function in three modes: peeking, timed or polling
+// - peeking - by setting ptimeout to a time that has already occurred, you effectively check if a message exists, without blocking
+// - timed - by setting ptimeout to any future time, the function will either return a message or timeout, hence acting as a timer
+// - polling - by setting ptimeout to NULL, the function will never timeout, hence you will be polling for just a message
+// If a message was delivered, true is returned. If timed out, false is returned
+bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pudata, int *perr);
 
 // Returns a reference to the stdin stream
 ev_handle_t ev_stdin(ev_t ev);

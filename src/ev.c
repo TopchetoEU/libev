@@ -21,25 +21,16 @@
 	#error Either unix or windows must be enabled
 #endif
 
+// #undef EV_USE_URING
+
 #ifdef EV_USE_URING
 	#include "./unix/uring.c"
+#else
+	#include "./queue.h"
 #endif
-
-typedef struct ev_msg {
-	struct ev_msg *next;
-	void *udata;
-	int err;
-} *ev_msg_t;
 
 struct ev {
 	size_t active_n;
-
-	#ifdef EV_USE_MULTITHREAD
-		ev_mutex_t lock;
-		ev_cond_t has_msg_cond;
-	#endif
-
-	ev_msg_t next_msg;
 
 	ev_handle_t in, out, err;
 
@@ -47,8 +38,10 @@ struct ev {
 		struct ev_pool_worker *next_worker;
 	#endif
 
-	#ifdef EV_USE_URING
-		struct ev_uring uring[1];
+	#if defined EVI_ASYNC
+		ev_async_s async[1];
+	#else
+		ev_queue_s queue[1];
 	#endif
 };
 
@@ -182,32 +175,22 @@ ev_time_t ev_timesub(ev_time_t a, ev_time_t b) {
 
 	return res;
 }
+int ev_timecmp(ev_time_t a, ev_time_t b) {
+	if (a.sec != b.sec) return a.sec < b.sec ? -1 : 1;
+	if (a.nsec != b.nsec) return a.nsec < b.nsec ? -1 : 1;
+	return 0;
+}
 int64_t ev_timems(ev_time_t time) {
 	return time.sec * 1000 + (time.nsec + 999999) / 1000000;
 }
 
 // EV CORE FUNCS
 
-static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
-	ev_msg_t msg = malloc(sizeof *msg);
-	if (!msg) return EV_ENOMEM;
-
-	msg->next = ev->next_msg;
-	msg->udata = udata;
-	msg->err = err;
-	ev->next_msg = msg;
-
-	#ifdef EV_USE_MULTITHREAD
-		ev_cond_broadcast(ev->has_msg_cond);
-	#endif
-
-	return EV_OK;
-}
-
 #ifdef EV_USE_MULTITHREAD
 	typedef struct ev_pool_worker {
 		struct ev_pool_worker *next;
 		ev_t ev;
+		ev_mutex_t lock;
 		ev_cond_t cond;
 
 		ev_thread_t thread;
@@ -227,7 +210,7 @@ static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 		ev_pool_worker_t worker = (ev_pool_worker_t)pargs;
 		ev_t ev = worker->ev;
 
-		ev_mutex_lock(ev->lock);
+		ev_mutex_lock(worker->lock);
 
 		while (true) {
 			while (worker->worker && !worker->kys) {
@@ -235,22 +218,24 @@ static ev_code_t evi_push(ev_t ev, void *udata, ev_code_t err) {
 				ev_worker_t cb = worker->worker;
 				void *args = worker->args;
 
-				ev_mutex_unlock(ev->lock);
+				ev_mutex_unlock(worker->lock);
 				ev_code_t code = cb(args);
-				ev_mutex_lock(ev->lock);
-
-				evi_push(ev, udata, code);
+				ev_mutex_lock(worker->lock);
 
 				worker->worker = NULL;
 				worker->args = NULL;
 				worker->udata = NULL;
+
+				ev_mutex_unlock(worker->lock);
+				ev_push(ev, udata, code);
+				ev_mutex_lock(worker->lock);
 			}
 			if (worker->kys) break;
 
-			ev_cond_wait(worker->cond, ev->lock);
+			ev_cond_wait(worker->cond, worker->lock);
 		}
 
-		ev_mutex_unlock(ev->lock);
+		ev_mutex_unlock(worker->lock);
 	}
 #endif
 
@@ -354,42 +339,39 @@ ev_t ev_init() {
 
 	ev->active_n = 0;
 
-	ev->next_msg = NULL;
-
 	if (evi_stdio_init(&ev->in, &ev->out, &ev->err) < 0) goto fail_stdio;
 
-	#ifdef EV_USE_MULTITHREAD
-		ev_mutex_new(ev->lock);
-		ev_cond_new(ev->has_msg_cond);
+	#ifdef EVI_ASYNC
+		if (evi_async_init(ev->async) < 0) goto fail_async;
+	#else
+		if (evi_queue_init(ev->queue) < 0) goto fail_async;
+	#endif
 
+	#ifdef EV_USE_WIN32
+		if (evi_win_init() < 0) goto fail_win;
+	#endif
+
+	#ifdef EV_USE_MULTITHREAD
 		ev->next_worker = NULL;
 	#endif
 
-	#ifdef EV_USE_URING
-		if (evi_uring_init(ev, ev->uring) < 0) goto fail_async;
-	#elif defined EV_USE_WIN32
-		if (evi_win_init() < 0) goto fail_async;
-	#endif
-
 	return ev;
-fail_async:
-	#ifdef EV_USE_MULTITHREAD
-		ev_cond_free(ev->has_msg_cond);
-		ev_mutex_free(ev->lock);
+fail_win:
+	#ifdef EVI_ASYNC
+		evi_async_free(ev->async);
+	#else
+		evi_queue_free(ev->queue);
 	#endif
+fail_async:
 	evi_stdio_free(ev->in, ev->out, ev->err);
 fail_stdio:
 	free(ev);
 	return NULL;
 }
 void ev_free(ev_t ev) {
-	ev_mutex_lock(ev->lock);
-
 	evi_stdio_free(ev->in, ev->out, ev->err);
 
-	#ifdef EV_USE_URING
-		evi_uring_free(ev->uring);
-	#elif defined EV_USE_WIN32
+	#ifdef EV_USE_WIN32
 		evi_win_free();
 	#endif
 
@@ -398,68 +380,79 @@ void ev_free(ev_t ev) {
 			ev_pool_worker_t curr = ev->next_worker;
 			ev->next_worker = curr->next;
 
+			ev_mutex_lock(curr->lock);
 			curr->kys = true;
 			ev_thread_cancel(curr->thread);
 			ev_cond_broadcast(curr->cond);
 
-			ev_mutex_unlock(ev->lock);
+			ev_mutex_unlock(curr->lock);
 			ev_thread_free_join(curr->thread);
-			ev_mutex_lock(ev->lock);
+			ev_mutex_lock(curr->lock);
 			ev_cond_free(curr->cond);
+			ev_mutex_unlock(curr->lock);
+			ev_mutex_free(curr->lock);
 			free(curr);
 		}
 
 		ev->next_worker = NULL;
 
-		ev_cond_broadcast(ev->has_msg_cond);
-
-		ev_mutex_unlock(ev->lock);
-		ev_mutex_free(ev->lock);
+		#ifdef EVI_ASYNC
+			evi_async_free(ev->async);
+		#else
+			evi_queue_free(ev->queue);
+		#endif
 	#endif
 }
 
 bool ev_busy(ev_t ev) {
-	ev_mutex_lock(ev->lock);
-	bool res = ev->active_n > 0;
-	ev_mutex_unlock(ev->lock);
+	return ev->active_n > 0;
+}
+
+ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
+	#ifdef EVI_ASYNC
+		return evi_async_push(ev->async, udata, err);
+	#else
+		return evi_queue_push(ev->queue, udata, err);
+	#endif
+}
+bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pudata, int *perr) {
+	#ifdef EVI_ASYNC
+		bool res = evi_async_poll(ev->async, ptimeout, pudata, perr);
+	#else
+		bool res = evi_queue_poll(ev->queue, ptimeout, pudata, perr);
+	#endif
+
+	if (res) ev->active_n--;
 	return res;
 }
 
 void ev_begin(ev_t ev) {
-	ev_mutex_lock(ev->lock);
 	ev->active_n++;
-	ev_mutex_unlock(ev->lock);
-}
-ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
-	ev_mutex_lock(ev->lock);
-	ev_code_t code = evi_push(ev, udata, err);
-	ev_mutex_unlock(ev->lock);
-
-	return code;
 }
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
-	ev_mutex_lock(ev->lock);
 	(void)sync;
 
 	#ifdef EV_USE_MULTITHREAD
 		if (!sync) {
 			for (ev_pool_worker_t it = ev->next_worker; it; it = it->next) {
+				ev_mutex_lock(it->lock);
 				if (!it->worker) {
 					it->worker = worker;
 					it->args = pargs;
 					it->udata = udata;
 					ev_cond_broadcast(it->cond);
 					ev->active_n++;
-					ev_mutex_unlock(ev->lock);
+					ev_mutex_unlock(it->lock);
 					return EV_OK;
 				}
+				ev_mutex_unlock(it->lock);
 			}
 
 			ev_pool_worker_t pool_worker = malloc(sizeof *pool_worker);
-			// TODO: should we fallback to the sync behavior, or should we return -ENOMEM?
-			if (!pool_worker) goto fallback;
+			if (!pool_worker) return EV_ENOMEM;
 
 			ev_cond_new(pool_worker->cond);
+			ev_mutex_new(pool_worker->lock);
 
 			pool_worker->ev = ev;
 			pool_worker->kys = false;
@@ -474,65 +467,21 @@ ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sy
 			if (ev_thread_new(pool_worker->thread, evi_pool_worker_entry, pool_worker) < 0) {
 				ev_cond_free(pool_worker->cond);
 				free(pool_worker);
-				goto fallback;
+				return EV_EAGAIN;
 			}
 
 			ev->active_n++;
-			ev_mutex_unlock(ev->lock);
 			return EV_OK;
 		}
-		else fallback: {
 	#endif
-			ev->active_n++;
-			int code = worker(pargs);
-			if (code == EV_ECANCELED) return EV_ECANCELED;
 
-			int errcode = evi_push(ev, udata, code);
+	ev->active_n++;
+	int code = worker(pargs);
+	if (code == EV_ECANCELED) return EV_ECANCELED;
 
-			ev_mutex_unlock(ev->lock);
-			return errcode;
-	#ifdef EV_USE_MULTITHREAD
-		}
-	#endif
-}
-ev_poll_res_t ev_poll(ev_t ev, bool wait, const ev_time_t *ptimeout, void **pudata, int *perr) {
-	ev_mutex_lock(ev->lock);
+	int errcode = ev_push(ev, udata, code);
 
-	while (!ev->next_msg && wait) {
-		#ifdef EV_USE_MULTITHREAD
-			if (ptimeout) {
-				if (ev_cond_timewait(ev->has_msg_cond, ev->lock, *ptimeout) == EV_ETIMEDOUT) {
-					ev_mutex_unlock(ev->lock);
-					return EV_POLL_TIMEOUT;
-				}
-			}
-			else {
-				ev_cond_wait(ev->has_msg_cond, ev->lock);
-			}
-		#else
-			if (ptimeout) {
-				evs_sleep(*ptimeout);
-			}
-			else {
-				// In non-threaded mode, it is impossible for us to get a message while we're blocked
-				// So we disobey the user and return empty instead
-				return EV_POLL_EMPTY;
-			}
-		#endif
-	}
-
-	ev_msg_t msg = ev->next_msg;
-	if (msg) ev->next_msg = msg->next;
-
-	*pudata = msg->udata;
-	*perr = msg->err;
-
-	free(msg);
-
-	ev->active_n--;
-	ev_mutex_unlock(ev->lock);
-
-	return EV_POLL_OK;
+	return errcode;
 }
 
 // ASYNC IO WRAPPERS
@@ -668,7 +617,7 @@ static int evi_getaddrinfo_worker(void *pargs) {
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t handle, char *buff, size_t *pn) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_read(ev->uring, udata, handle, buff, pn);
+		return evi_async_read(ev->async, udata, handle, buff, pn);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -682,7 +631,7 @@ ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t handle, char *buff, size_t *
 ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t handle, char *buff, size_t *pn) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_write(ev->uring, udata, handle, buff, pn);
+		return evi_async_write(ev->async, udata, handle, buff, pn);
 	#else
 		evi_rw_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -697,7 +646,7 @@ ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t handle, char *buff, size_t 
 ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_file_open(ev->uring, udata, pres, path, flags, mode);
+		return evi_async_file_open(ev->async, udata, pres, path, flags, mode);
 	#else
 		evi_file_open_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -712,7 +661,7 @@ ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_file_read(ev->uring, udata, fd, (char*)buff, n, offset);
+		return evi_async_file_read(ev->async, udata, fd, (char*)buff, n, offset);
 	#else
 		evi_file_rw_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -726,7 +675,7 @@ ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, s
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_file_write(ev->uring, udata, fd, buff, n, offset);
+		return evi_async_file_write(ev->async, udata, fd, buff, n, offset);
 	#else
 		evi_file_rw_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -741,7 +690,7 @@ ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t
 ev_code_t ev_sync(ev_t ev, void *udata, ev_handle_t fd) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_file_sync(ev->uring, udata, fd);
+		return evi_async_sync(ev->async, udata, fd);
 	#else
 		evi_file_sync_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -753,7 +702,7 @@ ev_code_t ev_sync(ev_t ev, void *udata, ev_handle_t fd) {
 ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_file_stat(ev->uring, udata, fd, buff);
+		return evi_async_stat(ev->async, udata, fd, buff);
 	#else
 		evi_file_stat_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -813,7 +762,7 @@ ev_code_t ev_server_bind(ev_t ev, void *udata, ev_server_t *pres, ev_proto_t pro
 ev_code_t ev_server_accept(ev_t ev, void *udata, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_server_accept(ev->uring, udata, pres, paddr, pport, server);
+		return evi_async_server_accept(ev->async, udata, pres, paddr, pport, server);
 	#else
 		evi_server_accept_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
@@ -852,7 +801,7 @@ ev_code_t ev_proc_spawn(
 ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pcode) {
 	#ifdef EV_USE_URING
 		ev_begin(ev);
-		return evi_uring_proc_wait(ev->uring, udata, proc, psig, pcode);
+		return evi_async_proc_wait(ev->async, udata, proc, psig, pcode);
 	#else
 		evi_wait_args_t *pargs = malloc(sizeof *pargs);
 		if (!pargs) return EV_ENOMEM;
