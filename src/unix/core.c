@@ -21,7 +21,9 @@
 #include <time.h>
 #include <dirent.h>
 
-struct ev_dir {};
+#ifndef __USE_GNU
+	extern char **environ;
+#endif
 
 static char *evi_unix_gethome(const char *suffix) {
 	struct passwd resbuf[1];
@@ -121,6 +123,24 @@ ev_code_t evs_write(ev_handle_t fd, char *buff, size_t *pn) {
 	*pn = n;
 	return EV_OK;
 }
+ev_code_t evs_sync(ev_handle_t fd) {
+	if (!evi_unix_isfd(fd)) return EV_EBADF;
+
+	return evi_unix_conv_errno(fsync(evi_unix_fd(fd)));
+}
+ev_code_t evs_stat(ev_handle_t fd, ev_stat_t *buff) {
+	struct stat res;
+
+	if (evi_unix_isfd(fd)) {
+		if (fstat(evi_unix_fd(fd), &res) < 0) return evi_unix_conv_errno(errno);
+	}
+	else {
+		if (stat(evi_unix_at(fd), &res) < 0) return evi_unix_conv_errno(errno);
+	}
+
+	evi_unix_conv_stat(buff, &res);
+	return EV_OK;
+}
 void evs_close(ev_handle_t fd) {
 	if (evi_unix_isfd(fd)) {
 		while (close((int)(size_t)fd) < 0) {
@@ -156,19 +176,6 @@ ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t fla
 	if (!*pres) return EV_ENOMEM;
 	return EV_OK;
 }
-ev_code_t evs_file_stat(ev_handle_t fd, ev_stat_t *buff) {
-	struct stat res;
-
-	if (evi_unix_isfd(fd)) {
-		if (fstat(evi_unix_fd(fd), &res) < 0) return evi_unix_conv_errno(errno);
-	}
-	else {
-		if (stat(evi_unix_at(fd), &res) < 0) return evi_unix_conv_errno(errno);
-	}
-
-	evi_unix_conv_stat(buff, &res);
-	return EV_OK;
-}
 ev_code_t evs_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
@@ -200,11 +207,6 @@ ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
-}
-ev_code_t evs_file_sync(ev_handle_t fd) {
-	if (!evi_unix_isfd(fd)) return EV_EBADF;
-
-	return evi_unix_conv_errno(fsync(evi_unix_fd(fd)));
 }
 
 ev_code_t evs_dir_new(const char *path, int mode) {
@@ -601,15 +603,15 @@ void evs_sleep(ev_time_t time) {
 }
 
 static ev_code_t evi_stdio_init(ev_handle_t *in, ev_handle_t *out, ev_handle_t *err) {
-	*in = (void*)(size_t)STDIN_FILENO;
-	*out = (void*)(size_t)STDOUT_FILENO;
-	*err = (void*)(size_t)STDERR_FILENO;
+	*in = evi_unix_mkfd(STDIN_FILENO);
+	*out = evi_unix_mkfd(STDOUT_FILENO);
+	*err = evi_unix_mkfd(STDERR_FILENO);
 
 	return EV_OK;
 }
 static ev_code_t evi_stdio_free(ev_handle_t in, ev_handle_t out, ev_handle_t err) {
-	(void)in;
-	(void)out;
-	(void)err;
+	evi_unix_freefd(in);
+	evi_unix_freefd(out);
+	evi_unix_freefd(err);
 	return EV_OK;
 }

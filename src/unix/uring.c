@@ -113,118 +113,6 @@ static ev_async_udata_t evi_uring_mkudata(ev_async_type_t type, void *ticket) {
 	return udata;
 }
 
-static ev_code_t evi_async_read(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->pn = n;
-
-	io_uring_prep_read(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, -1);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-static ev_code_t evi_async_write(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->pn = n;
-
-	io_uring_prep_write(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, -1);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-
-static ev_code_t evi_async_file_open(ev_async_t async, void *ticket, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->phnd = pres;
-
-	io_uring_prep_open(evi_uring_get_sqe(async, udata), path, evi_unix_conv_open_flags(flags), mode);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-static ev_code_t evi_async_file_read(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->pn = n;
-
-	io_uring_prep_read(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, offset);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-static ev_code_t evi_async_file_write(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->pn = n;
-
-	io_uring_prep_write(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, offset);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-static ev_code_t evi_async_sync(ev_async_t async, void *ticket, ev_handle_t fd) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
-	if (!udata) return EV_ENOMEM;
-
-	io_uring_prep_fsync(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), 0);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-static ev_code_t evi_async_stat(ev_async_t async, void *ticket, ev_handle_t fd, ev_stat_t *pres) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_STAT, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->stat.pres = pres;
-
-	int mask = 0;
-	mask |= STATX_MODE | STATX_TYPE;
-	mask |= STATX_UID | STATX_GID;
-	mask |= STATX_ATIME | STATX_CTIME | STATX_MTIME;
-	mask |= STATX_SIZE | STATX_BLOCKS;
-	mask |= STATX_INO | STATX_NLINK | STATX_MNT_ID | STATX_MNT_ID_UNIQUE;
-
-	io_uring_prep_statx(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), "", AT_EMPTY_PATH, mask, &udata->stat.buff);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-
-static ev_code_t evi_async_server_accept(ev_async_t async, void *ticket, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_ACCEPT, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->accept.pres = pres;
-	udata->accept.paddr = paddr;
-	udata->accept.pport = pport;
-	udata->accept.len = sizeof udata->accept.addr;
-
-	io_uring_prep_accept(evi_uring_get_sqe(async, udata), (int)(size_t)server, (void*)&udata->accept.addr, &udata->accept.len, 0);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-
-// static ev_code_t evi_async_socket_connect(ev_async_t async, void *ticket, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
-// 	int sock = evi_unix_new_sock(proto, addr.type);
-// 	if (sock < 0) return ev_push(ev, ticket, evi_unix_conv_errno(errno));
-
-// 	struct sockaddr_storage arg_addr;
-// 	int len = evi_unix_conv_addr(addr, port, &arg_addr);
-
-// 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_CONNECT, ticket);
-// 	if (!udata) return EV_ENOMEM;
-// 	udata->connect.pres = pres;
-// 	udata->connect.sock = sock;
-
-// 	io_uring_prep_connect(evi_uring_get_sqe(async, udata), sock, (void*)&arg_addr, len);
-// 	io_uring_submit(&async->ctx);
-// 	return EV_OK;
-// }
-
-static ev_code_t evi_async_proc_wait(ev_async_t async, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_WAIT, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->wait.pcode = pcode;
-	udata->wait.psig = psig;
-
-	io_uring_prep_waitid(evi_uring_get_sqe(async, udata), P_PID, (pid_t)(size_t)proc, &udata->wait.buff, WEXITED | WSTOPPED | WCONTINUED, 0);
-	io_uring_submit(&async->ctx);
-	return EV_OK;
-}
-
 static ev_code_t evi_async_push(ev_async_t async, void *ticket, int err) {
 	ev_async_msg_t msg;
 	memset(&msg, 0, sizeof msg);
@@ -351,6 +239,118 @@ static bool evi_async_poll(ev_async_t async, const ev_time_t *ptimeout, void **p
 	}
 }
 
+static ev_code_t evi_async_read(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->pn = n;
+
+	io_uring_prep_read(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, -1);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+static ev_code_t evi_async_write(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->pn = n;
+
+	io_uring_prep_write(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, -1);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+
+static ev_code_t evi_async_file_open(ev_async_t async, void *ticket, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->phnd = pres;
+
+	io_uring_prep_open(evi_uring_get_sqe(async, udata), path, evi_unix_conv_open_flags(flags), mode);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+static ev_code_t evi_async_file_read(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->pn = n;
+
+	io_uring_prep_read(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, offset);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+static ev_code_t evi_async_file_write(ev_async_t async, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->pn = n;
+
+	io_uring_prep_write(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), buff, *n, offset);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+static ev_code_t evi_async_sync(ev_async_t async, void *ticket, ev_handle_t fd) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	if (!udata) return EV_ENOMEM;
+
+	io_uring_prep_fsync(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), 0);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+static ev_code_t evi_async_stat(ev_async_t async, void *ticket, ev_handle_t fd, ev_stat_t *pres) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_STAT, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->stat.pres = pres;
+
+	int mask = 0;
+	mask |= STATX_MODE | STATX_TYPE;
+	mask |= STATX_UID | STATX_GID;
+	mask |= STATX_ATIME | STATX_CTIME | STATX_MTIME;
+	mask |= STATX_SIZE | STATX_BLOCKS;
+	mask |= STATX_INO | STATX_NLINK | STATX_MNT_ID | STATX_MNT_ID_UNIQUE;
+
+	io_uring_prep_statx(evi_uring_get_sqe(async, udata), evi_unix_fd(fd), "", AT_EMPTY_PATH, mask, &udata->stat.buff);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+
+static ev_code_t evi_async_server_accept(ev_async_t async, void *ticket, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_ACCEPT, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->accept.pres = pres;
+	udata->accept.paddr = paddr;
+	udata->accept.pport = pport;
+	udata->accept.len = sizeof udata->accept.addr;
+
+	io_uring_prep_accept(evi_uring_get_sqe(async, udata), (int)(size_t)server, (void*)&udata->accept.addr, &udata->accept.len, 0);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+
+static ev_code_t evi_async_socket_connect(ev_async_t async, void *ticket, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
+	int sock = evi_unix_new_sock(proto, addr.type);
+	if (sock < 0) return evi_async_push(async, ticket, evi_unix_conv_errno(errno));
+
+	struct sockaddr_storage arg_addr;
+	int len = evi_unix_conv_addr(addr, port, &arg_addr);
+
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_CONNECT, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->connect.pres = pres;
+	udata->connect.sock = sock;
+
+	io_uring_prep_connect(evi_uring_get_sqe(async, udata), sock, (void*)&arg_addr, len);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+
+static ev_code_t evi_async_proc_wait(ev_async_t async, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_WAIT, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->wait.pcode = pcode;
+	udata->wait.psig = psig;
+
+	io_uring_prep_waitid(evi_uring_get_sqe(async, udata), P_PID, (pid_t)(size_t)proc, &udata->wait.buff, WEXITED | WSTOPPED | WCONTINUED, 0);
+	io_uring_submit(&async->ctx);
+	return EV_OK;
+}
+
 static ev_code_t evi_async_init(ev_async_t async) {
 	int code;
 	if ((code = io_uring_queue_init(1024, &async->ctx, 0)) < 0) goto fail;
@@ -380,3 +380,14 @@ static ev_code_t evi_async_free(ev_async_t async) {
 	close(async->usermsg_write);
 	return EV_OK;
 }
+
+#define evi_async_read evi_async_read
+#define evi_async_write evi_async_write
+#define evi_async_file_open evi_async_file_open
+#define evi_async_file_read evi_async_file_read
+#define evi_async_file_write evi_async_file_write
+#define evi_async_sync evi_async_sync
+#define evi_async_stat evi_async_stat
+#define evi_async_server_accept evi_async_server_accept
+#define evi_async_socket_connect evi_async_socket_connect
+#define evi_async_proc_wait evi_async_proc_wait
