@@ -81,7 +81,6 @@ static ev_code_t evi_pool_exec(ev_t ev, ev_pool_t pool, void *udata, ev_worker_t
 	pool_worker->next = pool->next_worker;
 	pool->next_worker = pool_worker;
 
-	fprintf(stderr, "started a new thread\n");
 	if (ev_thread_new(pool_worker->thread, evi_pool_worker_entry, pool_worker) < 0) {
 		ev_cond_free(pool_worker->cond);
 		free(pool_worker);
