@@ -3,55 +3,56 @@
 
 #pragma once
 
-// 1. Infer sensible defaults
+// 1. Detect target
 
-#if defined __unix__
-	#ifndef EV_USE_UNIX
-		#define EV_USE_UNIX
+#if defined __unix__ && !defined EV_USE_POSIX
+	#define EV_USE_POSIX
+#endif
+#if defined __linux && !defined EV_USE_LINUX
+	#ifndef EV_USE_POSIX
+		#define EV_USE_POSIX
 	#endif
-
-	#if defined __linux
-		#ifndef EV_USE_LINUX
-			#define EV_USE_LINUX
-		#endif
-		#ifndef EV_USE_URING
-			#define EV_USE_URING
-		#endif
-	#endif
-
-	#ifndef EV_USE_MULTITHREAD
-		#define EV_USE_MULTITHREAD
-	#endif
-	#ifndef EV_USE_PTHREAD
-		#define EV_USE_PTHREAD
-	#endif
-#elif defined WIN32
+	#define EV_USE_LINUX
+#endif
+#if defined WIN32 && !defined EV_USE_WIN32
 	#define EV_USE_WIN32
-	#ifndef EV_USE_MULTITHREAD
-		#define EV_USE_MULTITHREAD
-	#endif
 #endif
 
-#define EV_USE_PTRTAG
-
-// 2. Reflect user-defined blacklist overrides
+// 2. Apply user overrides for the system
 
 #if defined EV_NO_USE_WIN32
 	#undef EV_USE_WIN32
 #endif
 #if defined EV_NO_USE_UNIX
-	#undef EV_USE_UNIX
+	#undef EV_USE_POSIX
 #endif
 #if defined EV_NO_USE_LINUX
 	#undef EV_USE_LINUX
 	#undef EV_USE_URING
 #endif
+
+// 3. Infer sensible defaults for features from target
+
+#define EV_USE_PTRTAG
+
+#ifdef EV_USE_LINUX
+	#define EV_USE_MULTITHREAD
+	#define EV_USE_URING
+#elif defined EV_USE_POSIX
+	#define EV_USE_MULTITHREAD
+#elif defined EV_USE_WIN32
+	#define EV_USE_MULTITHREAD
+#else
+	#warning "Unsupported target"
+#endif
+
+// 4. Apply user blacklists for features
+
 #if defined EV_NO_USE_URING
 	#undef EV_USE_URING
 #endif
 #ifdef EV_NO_USE_MULTITHREAD
 	#undef EV_USE_PTHREAD
-	#undef EV_USE_MULTITHREAD
 #endif
 #ifdef EV_NO_USE_PTHREAD
 	#undef EV_USE_PTHREAD
@@ -60,7 +61,7 @@
 	#undef EV_USE_PTRTAG
 #endif
 
-// 3. Setup other defines, if they depend on above config
+// 5. Add gnu sources on linux (required for uring)
 
 #if defined EV_USE_LINUX
 	#define _GNU_SOURCE
