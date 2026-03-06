@@ -910,8 +910,6 @@ fork(function ()
 		env = {},
 	});
 
-	print(proc_in, proc_out)
-
 	fork(function ()
 		assert(evs.write(proc_in, "The quick brown fox jumped over the red dog\n"));
 		assert(evs.write(proc_in, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n"));
@@ -935,6 +933,7 @@ end);
 fork(function ()
 	for pair in ev.iterenv() do
 		print(pair:match "(.-)=(.*)");
+		interrupt();
 	end
 end);
 
