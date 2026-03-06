@@ -9,11 +9,15 @@
 
 #include <winsock2.h>
 #include <ws2ipdef.h>
+#include <errhandlingapi.h>
+#include <stringapiset.h>
+#include <wchar.h>
+#include <winerror.h>
 
 struct ev_dir {
 	HANDLE hnd;
 	bool done;
-	WIN32_FIND_DATAA data;
+	WIN32_FIND_DATAW data;
 };
 
 struct ev_hnd {
@@ -28,7 +32,8 @@ struct ev_hnd {
 };
 
 typedef struct {
-	char *data, *curr;
+	wchar_t *data, *curr;
+	char *lastalloc;
 } *evi_win_nextenv_udata_t;
 
 static ev_handle_t evi_win_mkhnd(HANDLE hnd) {
@@ -234,12 +239,40 @@ static ev_code_t evi_win_conv_errno(int winerr) {
 		default: return EV_EUNKNOWN;
 	}
 }
-static char *evi_win_fix_path(char *path) {
-	for (char *it = strchr(path, '/'); it; it = strchr(path, '/')) {
+static wchar_t *evi_win_fix_path(wchar_t *path) {
+	for (wchar_t *it = wcschr(path, '/'); it; it = wcschr(path, '/')) {
 		*it = '\\';
 	}
 
 	return path;
+}
+
+// Everybody uses utf8, but NOOOOO, windows just HAD to use utf16
+static wchar_t *evi_win_conv_utf8(const char *str, size_t extra_n) {
+	int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, -1, NULL, 0);
+	if (len == 0) return NULL;
+
+	wchar_t *wstr = malloc(sizeof *wstr * (len + extra_n));
+	if (!wstr) {
+		SetLastError(ERROR_OUTOFMEMORY);
+		return NULL;
+	}
+
+	MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, str, -1, wstr, len);
+	return wstr;
+}
+static char *evi_win_conv_utf16(const wchar_t *wstr) {
+	int len = WideCharToMultiByte(CP_UTF8, MB_ERR_INVALID_CHARS, wstr, -1, NULL, 0, NULL, NULL);
+	if (len == 0) return NULL;
+
+	char *str = malloc(len);
+	if (!str) {
+		SetLastError(ERROR_OUTOFMEMORY);
+		return NULL;
+	}
+
+	WideCharToMultiByte(CP_UTF8, MB_ERR_INVALID_CHARS, wstr, -1, str, len, NULL, NULL);
+	return str;
 }
 
 static int evi_win_conv_addr(ev_addr_t addr, uint16_t port, struct sockaddr_storage *pres) {

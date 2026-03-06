@@ -1,5 +1,4 @@
 #pragma once
-#include <stddef.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 
 #include "ev/conf.h"
@@ -12,6 +11,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
+#include <wchar.h>
 
 #include <windows.h>
 #include <errhandlingapi.h>
@@ -38,13 +39,15 @@ static SOCKET evi_win_sock_new(ev_proto_t proto, ev_addr_type_t type) {
 	);
 }
 
-static char *evi_win_getpath(int id, const char *suffix) {
-	char *res = suffix ? malloc(MAX_PATH + strlen(suffix) + 1) : malloc(MAX_PATH);
-	if (!res) return NULL;
-	if (SHGetFolderPath(NULL, id, NULL, 0, res) != S_OK) return NULL;
+static char *evi_win_getpath(int id, const wchar_t *suffix) {
+	wchar_t *buff = suffix ? malloc(sizeof *buff * (MAX_PATH + wcslen(suffix) + 1)) : malloc(sizeof *buff * (MAX_PATH + 1));
+	if (!buff) return NULL;
+	if (SHGetFolderPathW(NULL, id, NULL, 0, buff) != S_OK) return NULL;
 
-	if (suffix) strcpy(res, suffix);
-	res = realloc(res, strlen(res) + 1);
+	if (suffix) wcscpy(buff, suffix);
+
+	char *res = evi_win_conv_utf16(buff);
+	free(buff);
 	return res;
 }
 
@@ -84,7 +87,7 @@ static int evi_win_child_std_new(
 	return 0;
 }
 
-static char *evi_win_argv_to_cmdline(const char **argv) {
+static wchar_t *evi_win_argv_to_cmdline(const char **argv) {
 	size_t n = 0, buff_n = 0;
 
 	for (const char **it = argv; *it; it++) {
@@ -92,19 +95,23 @@ static char *evi_win_argv_to_cmdline(const char **argv) {
 		buff_n += 1 /* " */ + strlen(*it) * 2 /* Assuming each one is \ */ + 1 /* " */ + 1 /* Trailing space / \0 */;
 	}
 
-	char *buff = malloc(buff_n);
+	wchar_t *buff = malloc(sizeof *buff * buff_n);
 	if (!buff) return NULL;
 
-	char *curr = buff;
+	wchar_t *curr = buff;
 
 	for (size_t i = 0; i < n; i++) {
-		const char *arg = argv[i];
+		wchar_t *warg = evi_win_conv_utf8(argv[i], 0);
+		if (warg == NULL) {
+			free(buff);
+			return NULL;
+		}
 
 		*(curr++) = '\"';
 
 		size_t back_n = 0;
 
-		for (const char *it = arg; *it; it++) {
+		for (wchar_t *it = warg; *it; it++) {
 			if (*it == '\\') back_n++;
 			else if (*it == '\"') {
 				for (size_t i = 0; i < back_n; i++) {
@@ -133,11 +140,14 @@ static char *evi_win_argv_to_cmdline(const char **argv) {
 
 		if (i == n - 1) *(curr++) = '\0';
 		else *(curr++) = ' ';
+
+		free(warg);
 	}
 
+	buff = realloc(buff, sizeof *buff * (curr - buff));
 	return buff;
 }
-static char *evi_win_envp_to_envblock(const char **envp) {
+static wchar_t *evi_win_envp_to_envblock(const char **envp) {
 	if (!envp) return NULL;
 
 	size_t n = 0, buff_n = 0;
@@ -147,14 +157,21 @@ static char *evi_win_envp_to_envblock(const char **envp) {
 		buff_n += strlen(*it) + 1 /* terminating \0 */;
 	}
 
-	char *buff = malloc(buff_n + 1 /* terminating \0 */);
-	char *curr = buff;
+	wchar_t *buff = malloc(sizeof *buff * (buff_n + 1 /* terminating \0 */));
+	wchar_t *curr = buff;
 
 	for (size_t i = 0; i < n; i++) {
-		curr = strcpy(curr, envp[i]) + 1;
-	}
-	*curr = '\0';
+		int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, envp[i], -1, curr, buff_n - (curr - buff));
+		if (!n) {
+			free(buff);
+			return NULL;
+		}
 
+		curr += n;
+	}
+
+	*curr = '\0';
+	buff = realloc(buff, sizeof *buff * (curr - buff + 1));
 	return buff;
 }
 
@@ -210,6 +227,58 @@ ev_code_t evs_write(ev_handle_t fd, char *buff, size_t *pn) {
 		default: return EV_EBADF;
 	}
 }
+ev_code_t evs_sync(ev_handle_t fd) {
+	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
+	if (!FlushFileBuffers(fd->hnd)) return evi_win_conv_errno(GetLastError());
+	return EV_OK;
+}
+ev_code_t evs_stat(ev_handle_t fd, ev_stat_t *buff) {
+	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
+
+	BY_HANDLE_FILE_INFORMATION info;
+	if (!GetFileInformationByHandle(fd->hnd, &info)) return evi_win_conv_errno(GetLastError());
+
+	// Fake it till we make it .-.
+
+	if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
+		buff->mode = 0555;
+	}
+	else {
+		buff->mode = 0777;
+	}
+
+	if (info.dwFileAttributes & FILE_ATTRIBUTE_NORMAL) {
+		buff->type = EV_STAT_REG;
+	}
+	else if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+		buff->type = EV_STAT_DIR;
+	}
+	else if (info.dwFileAttributes & FILE_ATTRIBUTE_DEVICE) {
+		buff->type = EV_STAT_BLK;
+	}
+	else if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+		buff->type = EV_STAT_LINK;
+		buff->mode = 0777;
+	}
+
+	buff->uid = 1000;
+	buff->gid = 1000;
+
+	buff->atime = evi_win_conv_filetime(info.ftLastAccessTime);
+	buff->mtime = evi_win_conv_filetime(info.ftLastWriteTime);
+	// The semantics of this are dubious, do we equate the creation of a file to the last change of its metadata
+	// TODO: look into this further
+	buff->ctime = evi_win_conv_filetime(info.ftCreationTime);
+
+	buff->size = COMBINE64(info.nFileSizeLow, info.nFileSizeHigh);
+	// TODO: does windows expose a preferred blk size somehow? For now, we pick a reasonable arbitrary blksize
+	buff->blksize = 4096;
+
+	buff->inode = COMBINE64(info.nFileIndexLow, info.nFileIndexHigh);
+	buff->links = info.nNumberOfLinks;
+
+	return EV_OK;
+}
 void evs_close(ev_handle_t fd) {
 	switch (fd->kind) {
 		case EVI_WIN_HND:
@@ -262,7 +331,11 @@ ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t fla
 		sec_attribs.bInheritHandle = true;
 	}
 
-	HANDLE hnd = CreateFile(path, access, access_others, NULL, create_mode, FILE_ATTRIBUTE_NORMAL | res_flags, NULL);
+	wchar_t *wpath = evi_win_conv_utf8(path, 0);
+	if (!wpath) return evi_win_conv_errno(GetLastError());
+
+	HANDLE hnd = CreateFileW(wpath, access, access_others, NULL, create_mode, FILE_ATTRIBUTE_NORMAL | res_flags, NULL);
+	free(wpath);
 	if (hnd == INVALID_HANDLE_VALUE) return evi_win_conv_errno(GetLastError());
 
 	*pres = evi_win_mkhnd(hnd);
@@ -302,75 +375,29 @@ ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	*n = out_n;
 	return EV_OK;
 }
-ev_code_t evs_file_sync(ev_handle_t fd) {
-	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
-	if (!FlushFileBuffers(fd->hnd)) return evi_win_conv_errno(GetLastError());
-	return EV_OK;
-}
-ev_code_t evs_file_stat(ev_handle_t fd, ev_stat_t *buff) {
-	if (fd->kind != EVI_WIN_HND) return EV_EBADF;
-
-	BY_HANDLE_FILE_INFORMATION info;
-	if (!GetFileInformationByHandle(fd->hnd, &info)) return evi_win_conv_errno(GetLastError());
-
-	// Fake it till we make it .-.
-
-	if (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) {
-		buff->mode = 0555;
-	}
-	else {
-		buff->mode = 0777;
-	}
-
-	if (info.dwFileAttributes & FILE_ATTRIBUTE_NORMAL) {
-		buff->type = EV_STAT_REG;
-	}
-	else if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-		buff->type = EV_STAT_DIR;
-	}
-	else if (info.dwFileAttributes & FILE_ATTRIBUTE_DEVICE) {
-		buff->type = EV_STAT_BLK;
-	}
-	else if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
-		buff->type = EV_STAT_LINK;
-		buff->mode = 0777;
-	}
-
-	buff->uid = 1000;
-	buff->gid = 1000;
-
-	buff->atime = evi_win_conv_filetime(info.ftLastAccessTime);
-	buff->mtime = evi_win_conv_filetime(info.ftLastWriteTime);
-	// The semantics of this are dubious, do we equate the creation of a file to the last change of its metadata
-	// TODO: look into this further
-	buff->ctime = evi_win_conv_filetime(info.ftCreationTime);
-
-	buff->size = COMBINE64(info.nFileSizeLow, info.nFileSizeHigh);
-	// TODO: does windows expose a preferred blk size somehow? For now, we pick a reasonable arbitrary blksize
-	buff->blksize = 4096;
-
-	buff->inode = COMBINE64(info.nFileIndexLow, info.nFileIndexHigh);
-	buff->links = info.nNumberOfLinks;
-
-	return EV_OK;
-}
 
 ev_code_t evs_dir_new(const char *path, int mode) {
 	(void)mode;
-	if (!CreateDirectory(path, NULL)) return evi_win_conv_errno(GetLastError());
+
+	wchar_t *wpath = evi_win_conv_utf8(path, 0);
+	if (!wpath) return evi_win_conv_errno(GetLastError());
+
+	bool res = CreateDirectoryW(wpath, NULL);
+	free(wpath);
+	if (!res) return evi_win_conv_errno(GetLastError());
+
 	return EV_OK;
 }
 ev_code_t evs_dir_open(ev_dir_t *pres, const char *path) {
-	char *pattern = malloc(strlen(path) + 3);
-	if (!pattern) return EV_ENOMEM;
+	wchar_t *wpattern = evi_win_conv_utf8(path, 2);
+	if (!wpattern) return evi_win_conv_errno(GetLastError());
+	wcscat(wpattern, L"\\*");
+	evi_win_fix_path(wpattern);
 
-	sprintf(pattern, "%s\\*", path);
-	evi_win_fix_path(pattern);
-
-	WIN32_FIND_DATAA data;
+	WIN32_FIND_DATAW data;
 	memset(&data, 0, sizeof data);
-	HANDLE hnd = FindFirstFileA(pattern, &data);
-	free(pattern);
+	HANDLE hnd = FindFirstFileW(wpattern, &data);
+	free(wpattern);
 	if (hnd == INVALID_HANDLE_VALUE) return evi_win_conv_errno(GetLastError());
 
 	ev_dir_t res = malloc(sizeof *res);
@@ -389,8 +416,10 @@ ev_code_t evs_dir_next(ev_dir_t dir, char **pname) {
 			return EV_OK;
 		}
 
-		*pname = strdup(dir->data.cFileName);
-		if (!FindNextFileA(dir->hnd, &dir->data)) {
+		bool is_synth = !wcscmp(dir->data.cFileName, L".") || !wcscmp(dir->data.cFileName, L"..");
+		if (!is_synth) *pname = evi_win_conv_utf16(dir->data.cFileName);
+
+		if (!FindNextFileW(dir->hnd, &dir->data)) {
 			if (GetLastError() == ERROR_NO_MORE_FILES) {
 				dir->done = true;
 			}
@@ -399,9 +428,7 @@ ev_code_t evs_dir_next(ev_dir_t dir, char **pname) {
 			}
 		}
 
-		if (!strcmp(*pname, ".")) continue;
-		if (!strcmp(*pname, "..")) continue;
-		return EV_OK;
+		if (!is_synth) return EV_OK;
 	}
 }
 void evs_dir_close(ev_dir_t dir) {
@@ -478,24 +505,32 @@ ev_code_t evs_proc_spawn(
 	if (evi_win_child_std_new(STD_OUTPUT_HANDLE, &out_parent, &out_child, out_flags, pout) < 0) goto err_in_pipe;
 	if (evi_win_child_std_new(STD_ERROR_HANDLE, &err_parent, &err_child, err_flags, perr) < 0) goto err_out_pipe;
 
-	char *cmdline = evi_win_argv_to_cmdline(argv);
+	wchar_t *cmdline = evi_win_argv_to_cmdline(argv);
 	if (!cmdline) goto err_err_pipe;
 
-	char *envblock = evi_win_envp_to_envblock(envp);
+	wchar_t *envblock = evi_win_envp_to_envblock(envp);
 	if (!envblock) goto err_cmdline;
 
-	STARTUPINFOA start_info = { .cb = sizeof start_info };
+	wchar_t *procname = evi_win_conv_utf8(argv[0], 0);
+	if (!procname) goto err_envblock;
+
+	wchar_t *wcwd = evi_win_conv_utf8(cwd, 0);
+	if (cwd && !wcwd) goto err_procname;
+
+	STARTUPINFOW start_info = { .cb = sizeof start_info };
 	start_info.hStdInput  = in_child;
 	start_info.hStdOutput = out_child;
 	start_info.hStdError  = err_child;
 	start_info.dwFlags |= STARTF_USESTDHANDLES;
 
 	PROCESS_INFORMATION proc_info;
-	BOOL res = CreateProcess(argv[0], cmdline, NULL, NULL, true, 0, envblock, cwd, &start_info, &proc_info);
-	if (!res || !proc_info.hProcess) goto err_envblock;
+	BOOL res = CreateProcessW(procname, cmdline, NULL, NULL, true, 0, envblock, wcwd, &start_info, &proc_info);
+	if (!res || !proc_info.hProcess) goto err_wcwd;
 
 	free(cmdline);
 	free(envblock);
+	free(procname);
+	free(wcwd);
 
 	if (in_flags == EV_SPAWN_STD_PIPE) {
 		CloseHandle(in_child);
@@ -514,6 +549,10 @@ ev_code_t evs_proc_spawn(
 	CloseHandle(proc_info.hThread);
 
 	return 0;
+err_wcwd:
+	free(wcwd);
+err_procname:
+	free(procname);
 err_envblock:
 	free(envblock);
 err_cmdline:
@@ -560,7 +599,7 @@ ev_code_t evs_proc_wait(ev_proc_t proc, int *psig, int *pcode) {
 }
 
 ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
-	struct addrinfo hints = { 0 };
+	ADDRINFOW hints = { 0 };
 
 	if (flags & EV_AI_IPV4_MAPPED) hints.ai_flags |= EV_AI_IPV4_MAPPED;
 
@@ -571,13 +610,18 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	if (flags & EV_AI_BIND) hints.ai_flags |= AI_PASSIVE;
 	if (flags & EV_AI_NODNS) hints.ai_flags |= AI_NUMERICHOST;
 
-	struct addrinfo *list = NULL;
+	ADDRINFOW *list = NULL;
+
+	wchar_t *wname = evi_win_conv_utf8(name, 0);
+	if (!wname) return evi_win_conv_errno(GetLastError());
 
 	int code;
 
 	// We still want to resolve a valid loopback IP, even if getaddrinfo
-	if (name == NULL) code = getaddrinfo(name, "80", &hints, &list);
-	else code = getaddrinfo(name, "", &hints, &list);
+	if (name == NULL) code = GetAddrInfoW(wname, L"80", &hints, &list);
+	else code = GetAddrInfoW(wname, L"", &hints, &list);
+
+	free(wname);
 
 	switch (code) {
 		case 0: break;
@@ -592,13 +636,13 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	}
 
 	size_t n = 0;
-	for (struct addrinfo *it = list; it; it = it->ai_next) n++;
+	for (ADDRINFOW *it = list; it; it = it->ai_next) n++;
 
 	ev_addrinfo_t res = malloc(sizeof *res + sizeof *res->addr * n);
 	if (!res) return EV_ENOMEM;
 
 	size_t i = 0;
-	for (struct addrinfo *it = list; it; it = it->ai_next) {
+	for (ADDRINFOW *it = list; it; it = it->ai_next) {
 		uint16_t port;
 		ev_addr_t addr;
 		evi_win_conv_sockaddr((void*)it->ai_addr, &addr, &port);
@@ -620,7 +664,7 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 
 	res->n = i;
 
-	if (list) freeaddrinfo(list);
+	if (list) FreeAddrInfoW(list);
 
 	*pres = res;
 	return EV_OK;
@@ -636,7 +680,7 @@ ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 		}
 		case EV_PATH_RUNTIME:
 		case EV_PATH_CACHE: {
-			char *res = evi_win_getpath(CSIDL_LOCAL_APPDATA, "\\Temp");
+			char *res = evi_win_getpath(CSIDL_LOCAL_APPDATA, L"\\Temp");
 			if (!res) return evi_win_conv_errno(GetLastError());
 
 			*pres = res;
@@ -657,12 +701,13 @@ ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 			return EV_OK;
 		}
 		case EV_PATH_CWD: {
-			char *path = malloc(MAX_PATH + 1);
-			if (!path) return evi_win_conv_errno(GetLastError());
-			if (!GetCurrentDirectory(sizeof path, path)) return evi_win_conv_errno(GetLastError());
+			wchar_t *wpath = malloc(sizeof *wpath * (MAX_PATH + 1));
+			if (!wpath) return EV_ENOMEM;
+			if (!GetCurrentDirectoryW(sizeof *wpath * (MAX_PATH + 1), wpath)) return evi_win_conv_errno(GetLastError());
 
-			path = realloc(path, strlen(path) + 1);
-			*pres = path;
+			*pres = evi_win_conv_utf16(wpath);
+			free(wpath);
+			if (!*pres) return evi_win_conv_errno(GetLastError());
 			return EV_OK;
 		}
 	}
@@ -671,8 +716,12 @@ ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 }
 
 ev_code_t evs_getenv(const char *name, char **pres) {
-	int n = GetEnvironmentVariable(name, NULL, 0);
+	wchar_t *wname = evi_win_conv_utf8(name, 0);
+	if (!wname) return evi_win_conv_errno(GetLastError());
+
+	int n = GetEnvironmentVariableW(wname, NULL, 0);
 	if (!n) {
+		free(wname);
 		if (GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
 			*pres = NULL;
 			return EV_OK;
@@ -681,19 +730,38 @@ ev_code_t evs_getenv(const char *name, char **pres) {
 		return evi_win_conv_errno(GetLastError());
 	}
 
-	char *buff = malloc(n);
-	if (!buff) return EV_ENOMEM;
+	wchar_t *buff = malloc(sizeof *buff * n);
+	if (!buff) {
+		free(wname);
+		return EV_ENOMEM;
+	}
 
-	if (!GetEnvironmentVariable(name, buff, n)) {
+	if (!GetEnvironmentVariableW(wname, buff, n)) {
+		free(wname);
 		free(buff);
 		return evi_win_conv_errno(GetLastError());
 	}
 
-	*pres = buff;
+	free(wname);
+	*pres = evi_win_conv_utf16(buff);
+	free(buff);
+	if (!*pres) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
 ev_code_t evs_setenv(const char *name, const char *val) {
-	if (!SetEnvironmentVariable(name, val)) return evi_win_conv_errno(GetLastError());
+	wchar_t *wname = evi_win_conv_utf8(name, 0);
+	if (!wname) return evi_win_conv_errno(GetLastError());
+
+	wchar_t *wval = evi_win_conv_utf8(val, 0);
+	if (!wval) {
+		free(wname);
+		return evi_win_conv_errno(GetLastError());
+	}
+
+	bool res = SetEnvironmentVariableW(wname, wval);
+	free(wname);
+	free(wval);
+	if (!res) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
 ev_code_t evs_nextenv(void **pit, const char **ppair) {
@@ -707,16 +775,18 @@ ev_code_t evs_nextenv(void **pit, const char **ppair) {
 		it = malloc(sizeof *it);
 		if (!it) return EV_ENOMEM;
 
-		it->data = it->curr = GetEnvironmentStrings();
+		it->data = it->curr = GetEnvironmentStringsW();
 		if (!it->data) {
 			free(it);
 			return evi_win_conv_errno(GetLastError());
 		}
 	}
 
-	size_t n = strlen(it->curr);
+	free(it->lastalloc);
+
+	size_t n = wcslen(it->curr);
 	if (n == 0) {
-		FreeEnvironmentStrings(it->data);
+		FreeEnvironmentStringsW(it->data);
 		free(it);
 
 		*pit = (void*)-1;
@@ -724,8 +794,11 @@ ev_code_t evs_nextenv(void **pit, const char **ppair) {
 		return EV_OK;
 	}
 
+	char *pair = evi_win_conv_utf16(it->curr);
+	if (!pair) return evi_win_conv_errno(GetLastError());
+	it->lastalloc = pair;
+	*ppair = pair;
 	*pit = it;
-	*ppair = it->curr;
 	it->curr += n + 1;
 	return EV_OK;
 }
