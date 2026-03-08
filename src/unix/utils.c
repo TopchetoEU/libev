@@ -1,9 +1,9 @@
-#pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
-#include "ev/conf.h"
-#include "ev.h"
-#include "ev/errno.h"
+#include <ev/conf.h>
+#include <ev.h>
+#include <ev/errno.h>
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <netdb.h>

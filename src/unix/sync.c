@@ -1,11 +1,9 @@
-#pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
-#include "ev/conf.h"
-#include "ev.h"
-#include "ev/errno.h"
-#include "ev/sync.h"
-#include "./common.h"
+#include <ev/conf.h>
+#include <ev/errno.h>
+#include <ev/sync.h>
+#include <ev.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -21,11 +19,14 @@
 #include <time.h>
 #include <dirent.h>
 
+#include "../ev.h"
+#include "./utils.c"
+
 #ifndef __USE_GNU
 	extern char **environ;
 #endif
 
-static char *evi_unix_gethome(const char *suffix) {
+static char *evi_generic_getenvpath(const char *suffix) {
 	struct passwd resbuf[1];
 	struct passwd *ppwd;
 	char *buff = malloc(PATH_MAX);
@@ -74,7 +75,7 @@ static char *evi_unix_getpath(const char *envname, const char *suffix) {
 		return res;
 	}
 
-	return evi_unix_gethome(suffix);
+	return evi_generic_getenvpath(suffix);
 }
 
 static int evi_unix_mkstd(int std_fd, int *pparent, int *pchild, ev_spawn_stdio_flags_t flags, ev_handle_t *pfd) {
@@ -179,16 +180,7 @@ ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t fla
 ev_code_t evs_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
-	// Since our API doesn't work with seek pointers (as uring warrants that),
-	// but pread/pwrite always seek, we need to have a special case for TTYs and pipes
-	ssize_t res;
-	if (offset == 0 && lseek(evi_unix_fd(fd), 0, SEEK_CUR) < 0) {
-		res = read(evi_unix_fd(fd), buff, *n);
-	}
-	else {
-		res = pread(evi_unix_fd(fd), buff, *n, offset);
-	}
-
+	ssize_t res = pread(evi_unix_fd(fd), buff, *n, offset);
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
@@ -196,14 +188,7 @@ ev_code_t evs_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 
-	ssize_t res;
-	if (offset == 0 && lseek(evi_unix_fd(fd), 0, SEEK_CUR) < 0) {
-		res = write(evi_unix_fd(fd), buff, *n);
-	}
-	else {
-		res = pwrite(evi_unix_fd(fd), buff, *n, offset);
-	}
-
+	ssize_t res = pwrite(evi_unix_fd(fd), buff, *n, offset);
 	if (res < 0) return evi_unix_conv_errno(errno);
 	*n = res;
 	return EV_OK;
@@ -479,7 +464,7 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
-			char *res = evi_unix_gethome(NULL);
+			char *res = evi_generic_getenvpath(NULL);
 			if (!res) return evi_unix_conv_errno(errno);
 
 			*pres = res;
@@ -602,16 +587,16 @@ void evs_sleep(ev_time_t time) {
 	}
 }
 
-static ev_code_t evi_stdio_init(ev_handle_t *in, ev_handle_t *out, ev_handle_t *err) {
-	*in = evi_unix_mkfd(STDIN_FILENO);
-	*out = evi_unix_mkfd(STDOUT_FILENO);
-	*err = evi_unix_mkfd(STDERR_FILENO);
+static ev_code_t evi_sync_init(ev_t ev) {
+	ev->in = evi_unix_mkfd(STDIN_FILENO);
+	ev->out = evi_unix_mkfd(STDOUT_FILENO);
+	ev->err = evi_unix_mkfd(STDERR_FILENO);
 
 	return EV_OK;
 }
-static ev_code_t evi_stdio_free(ev_handle_t in, ev_handle_t out, ev_handle_t err) {
-	evi_unix_freefd(in);
-	evi_unix_freefd(out);
-	evi_unix_freefd(err);
+static ev_code_t evi_sync_free(ev_t ev) {
+	evi_unix_freefd(ev->in);
+	evi_unix_freefd(ev->out);
+	evi_unix_freefd(ev->err);
 	return EV_OK;
 }

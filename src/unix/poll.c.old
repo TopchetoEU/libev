@@ -1,15 +1,9 @@
-#include <sys/poll.h>
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma once
 
-#ifdef EVI_ASYNC
-	#error "Only one async library may be used"
-#endif
-#define EVI_ASYNC
-
-#include "ev/conf.h"
-#include "ev.h"
-#include "ev/errno.h"
+#include <ev/conf.h>
+#include <ev.h>
+#include <ev/errno.h>
 #include "../multithread.h"
 #include "./common.h"
 #include "./utils.h"
@@ -23,6 +17,7 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <poll.h>
+#include <sys/poll.h>
 
 typedef enum {
 	EVI_POLL_READ,

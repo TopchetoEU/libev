@@ -1,8 +1,9 @@
 #pragma once
-#pragma GCC diagnostic ignored "-Wunused-function"
 
-#include "ev.h"
-#include "ev/errno.h"
+#include <ev/conf.h>
+#include <ev.h>
+#include <ev/errno.h>
+
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -316,15 +317,4 @@ static void evi_win_conv_sockaddr(struct sockaddr_storage *sockaddr, ev_addr_t *
 		// 	pres->v6[i] = ntohs(pres->v6[i]);
 		// }
 	}
-}
-
-static int evi_win_init() {
-	WSADATA data;
-	int code = WSAStartup(MAKEWORD(2, 2), &data);
-	if (code != 0) return -1;
-	return 0;
-}
-static int evi_win_free() {
-	if (WSACleanup() != 0) return -1;
-	return 0;
 }

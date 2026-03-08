@@ -25,6 +25,7 @@
 #endif
 #if defined EV_NO_USE_UNIX
 	#undef EV_USE_POSIX
+	#undef EV_USE_LINUX
 #endif
 #if defined EV_NO_USE_LINUX
 	#undef EV_USE_LINUX
@@ -42,8 +43,6 @@
 	#define EV_USE_MULTITHREAD
 #elif defined EV_USE_WIN32
 	#define EV_USE_MULTITHREAD
-#else
-	#warning "Unsupported target"
 #endif
 
 // 4. Apply user blacklists for features

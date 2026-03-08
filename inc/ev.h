@@ -148,8 +148,12 @@ void ev_free(ev_t ev);
 bool ev_busy(ev_t ev);
 
 // Signals to ev that a task has begun. Used to track `ev_busy`
+// ev_exec implicitly calls this
 void ev_begin(ev_t ev);
-// Pushes a result to the message queue
+// Signals to ev that a task has ended. Used to track `ev_busy`
+// ev_exec and ev_push implicitly call this
+void ev_end(ev_t ev);
+// Pushes a result to the message queue. Thread-safe
 // NOTE: using the same udata twice is UB
 ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err);
 // Calls worker with pargs in a ev-managed thread and returns a new ticket to it
@@ -195,7 +199,7 @@ ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 // Equivalent to posix's open
 ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // A file-specific read function
-ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
+ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 // A file-specific write function
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 

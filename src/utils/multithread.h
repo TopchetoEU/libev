@@ -1,15 +1,16 @@
 #pragma once
 
-#include "ev/conf.h"
-#include "ev/sync.h"
-#include "ev.h"
-#include "ev/errno.h"
+#include <ev/conf.h>
+#include <ev/sync.h>
+#include <ev/errno.h>
+#include <ev.h>
+
 #include <assert.h>
-#include <stdlib.h>
 
 #if defined EV_USE_MULTITHREAD && defined EV_USE_WIN32
 	#include <winsock2.h>
 	#include <windows.h>
+	#include <stdlib.h>
 
 	typedef HANDLE ev_thread_t[1];
 	typedef CRITICAL_SECTION ev_mutex_t[1];
@@ -41,9 +42,10 @@
 	#define ev_cond_broadcast(cond) (void)WakeAllConditionVariable(cond)
 	#define ev_cond_signal(cond) (void)WakeConditionVariable(cond)
 #elif defined EV_USE_MULTITHREAD && defined EV_USE_POSIX
-	#include <errno.h>
 	#include <pthread.h>
 	#include <signal.h>
+	#include <errno.h> // IWYU pragma: keep
+	#include <stdlib.h>
 
 	typedef pthread_t ev_thread_t[1];
 	typedef pthread_mutex_t ev_mutex_t[1];

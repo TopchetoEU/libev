@@ -1,11 +1,9 @@
 #pragma once
-#pragma GCC diagnostic ignored "-Wunused-function"
 
-#include "ev/conf.h"
-#include "ev/errno.h"
-#include "ev/sync.h"
-#include "ev.h"
-#include "common.h"
+#include <ev/conf.h>
+#include <ev/errno.h>
+#include <ev/sync.h>
+#include <ev.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -25,6 +23,9 @@
 #include <processenv.h>
 #include <processthreadsapi.h>
 #include <synchapi.h>
+
+#include "./utils.h"
+#include "../ev.h"
 
 // FIXME: never before run code, shat it out in an evening.
 // Consider windows as unsupported, until I can be bothered to cross-compile luajit
@@ -288,6 +289,7 @@ void evs_close(ev_handle_t fd) {
 			closesocket(fd->sock);
 			break;
 	}
+	free(fd);
 }
 
 ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
@@ -548,7 +550,7 @@ ev_code_t evs_proc_spawn(
 	*pres = proc_info.hProcess;
 	CloseHandle(proc_info.hThread);
 
-	return 0;
+	return EV_OK;
 err_wcwd:
 	free(wcwd);
 err_procname:
@@ -595,7 +597,7 @@ ev_code_t evs_proc_wait(ev_proc_t proc, int *psig, int *pcode) {
 	*psig = -1;
 	*pcode = code;
 
-	return 0;
+	return EV_OK;
 }
 
 ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags) {
@@ -827,16 +829,27 @@ void evs_sleep(ev_time_t time) {
 	Sleep(ev_timems(time));
 }
 
-static int evi_stdio_init(ev_handle_t *in, ev_handle_t *out, ev_handle_t *err) {
-	*in = evi_win_mkhnd(GetStdHandle(STD_INPUT_HANDLE));
-	*out = evi_win_mkhnd(GetStdHandle(STD_OUTPUT_HANDLE));
-	*err = evi_win_mkhnd(GetStdHandle(STD_ERROR_HANDLE));
+static ev_code_t evi_sync_init(ev_t ev) {
+	WSADATA data;
+	switch (WSAStartup(MAKEWORD(2, 2), &data)) {
+		case WSASYSNOTREADY: return EV_EAGAIN;
+		case WSAVERNOTSUPPORTED: return EV_ENOTSUP;
+		case WSAEINPROGRESS: return EV_EBUSY;
+		case WSAEPROCLIM: return EV_EAGAIN;
+		case WSAEFAULT: return EV_EINVAL;
+		default: break;
+	}
+
+	ev->in = evi_win_mkhnd(GetStdHandle(STD_INPUT_HANDLE));
+	ev->out = evi_win_mkhnd(GetStdHandle(STD_OUTPUT_HANDLE));
+	ev->err = evi_win_mkhnd(GetStdHandle(STD_ERROR_HANDLE));
 
 	return EV_OK;
 }
-static int evi_stdio_free(ev_handle_t in, ev_handle_t out, ev_handle_t err) {
-	free(in);
-	free(out);
-	free(err);
+static ev_code_t evi_sync_free(ev_t ev) {
+	if (WSACleanup() != 0) return -1;
+	free(ev->in);
+	free(ev->out);
+	free(ev->err);
 	return EV_OK;
 }

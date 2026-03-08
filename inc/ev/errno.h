@@ -19,6 +19,7 @@ typedef enum {
 	EV_ENOMEM = -12, // not enough memory
 	EV_EACCES = -13, // permission denied
 	EV_EFAULT = -14, // bad address in system call argument
+	EV_ENOTBLK = -15, // Block device required
 	EV_EBUSY = -16, // resource busy or locked
 	EV_EEXIST = -17, // file already exists
 	EV_EXDEV = -18, // cross-device link not permitted
@@ -36,6 +37,7 @@ typedef enum {
 	EV_EROFS = -30, // read-only file system
 	EV_EMLINK = -31, // too many links
 	EV_EPIPE = -32, // broken pipe
+	EV_EDOM = -33, // numerical argument out of domain
 	EV_ERANGE = -34, // result too large
 	EV_EDEADLK = -35, // resource deadlock avoided
 	EV_ENAMETOOLONG = -36, // name too long

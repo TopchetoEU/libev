@@ -1,4 +1,4 @@
-override CCFLAGS += -Iinc -Wall -Wextra -fPIC
+override CCFLAGS += -Iinc -Wall -Wextra -Wno-unused-function -fPIC
 
 HOST ?= $(shell uname)
 TARGET ?= $(shell uname)
