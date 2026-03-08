@@ -15,11 +15,11 @@
 #include <sys/socket.h>
 #include <sys/eventfd.h>
 
-#include "../ev.h"
-#include "../utils/multithread.h"
+#include "../../ev.h"
+#include "../../utils/multithread.h"
 #include "./uring.h"
 
-#include "../utils/queue.c"
+#include "../../utils/queue.c"
 #include "./utils.c"
 
 

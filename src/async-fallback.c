@@ -16,7 +16,7 @@ an implementation of the ev.h interface function.
 #include <stddef.h>
 #include <stdlib.h>
 
-#include "./impl/async.c"
+#include "./impl/async.c" // IWYU pragma: keep
 
 #define EVI_COMMA ,
 #define EVI_SEMICOLON ;

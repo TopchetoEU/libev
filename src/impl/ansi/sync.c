@@ -12,7 +12,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "../ev.h"
+#include "../../ev.h"
 #include "./utils.c"
 
 #ifndef __USE_GNU

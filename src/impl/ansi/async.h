@@ -1,10 +1,11 @@
 #pragma once
 
-#include "ev/conf.h"
+#include <ev/conf.h>
+
 #ifdef EV_USE_MULTITHREAD
-	#include "../utils/multithread.h"
+	#include "../../utils/multithread.h"
 #endif
-#include "../utils/queue.h"
+#include "../../utils/queue.h"
 
 typedef struct ev_async {
 	#ifdef EV_USE_MULTITHREAD

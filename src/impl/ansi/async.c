@@ -5,9 +5,9 @@
 
 #include <stddef.h>
 
-#include "../ev.h"
+#include "../../ev.h"
 
-#include "../utils/queue.c"
+#include "../../utils/queue.c"
 
 ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 	ev_mutex_lock(ev->async->lock);
