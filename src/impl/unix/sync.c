@@ -144,7 +144,7 @@ ev_code_t evs_stat(ev_handle_t fd, ev_stat_t *buff) {
 }
 void evs_close(ev_handle_t fd) {
 	if (evi_unix_isfd(fd)) {
-		while (close((int)(size_t)fd) < 0) {
+		while (close(evi_unix_fd(fd)) < 0) {
 			if (errno != EINTR) return;
 		}
 	}

@@ -205,8 +205,12 @@ ev_code_t ev_push(ev_t ev, void *ticket, ev_code_t err) {
 	return EV_OK;
 }
 bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
-	ev_async_udata_t timeout_udata = malloc(sizeof *timeout_udata);
-	timeout_udata->type = EVI_URING_TIMEOUT;
+	if (evi_queue_pop(ev, pticket, perr)) {
+		ev_end(ev);
+		return true;
+	}
+
+	ev_async_udata_t timeout_udata = NULL;
 
 	if (ptimeout) {
 		ev_time_t now;
@@ -214,6 +218,9 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 		if (evs_monotime(&now) == EV_OK && ev_timecmp(now, *ptimeout) > 0) {
 			// TODO: optimize this special case
 		}
+
+		timeout_udata = malloc(sizeof *timeout_udata);
+		timeout_udata->type = EVI_URING_TIMEOUT;
 
 		struct __kernel_timespec ts[1];
 		ts->tv_sec = ptimeout->sec;
