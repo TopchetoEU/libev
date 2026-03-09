@@ -160,7 +160,7 @@ void ev_begin(ev_t ev) {
 	ev->active_n++;
 }
 void ev_end(ev_t ev) {
-	ev->active_n++;
+	ev->active_n--;
 }
 ev_code_t ev_exec(ev_t ev, void *udata, ev_worker_t worker, void *pargs, bool sync) {
 	(void)sync;

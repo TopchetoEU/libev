@@ -237,7 +237,10 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 		if (udata->type == EVI_URING_USR) {
 			evi_setup_userpoll(ev);
 			io_uring_cqe_seen(&ev->async->ctx, cqe);
-			return evi_queue_pop(ev, pticket, perr);
+
+			bool res = evi_queue_pop(ev, pticket, perr);
+			if (res) ev_end(ev);
+			return res;
 		}
 		else if (udata->type == EVI_URING_TIMEOUT) {
 			if (udata != timeout_udata) {
@@ -256,6 +259,7 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 
 			free(udata);
 			io_uring_cqe_seen(&ev->async->ctx, cqe);
+			ev_end(ev);
 			return true;
 		}
 		else {
@@ -305,6 +309,7 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 
 			free(udata);
 			io_uring_cqe_seen(&ev->async->ctx, cqe);
+			ev_end(ev);
 			return true;
 		}
 

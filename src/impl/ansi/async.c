@@ -8,6 +8,7 @@
 #include "../../ev.h"
 
 #include "../../utils/queue.c"
+#include "ev.h"
 
 ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err) {
 	ev_mutex_lock(ev->async->lock);
@@ -32,7 +33,7 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pudata, int *perr) {
 	while (true) {
 		if (evi_queue_pop(ev, pudata, perr)) {
 			ev_mutex_unlock(ev->async->lock);
-			ev->active_n--;
+			ev_end(ev);
 			return true;
 		}
 
