@@ -4,6 +4,7 @@
 #include <ev.h>
 #include <ev/errno.h>
 
+#include <liburing/io_uring.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -95,7 +96,7 @@ ev_code_t ev_file_open(ev_t ev, void *ticket, ev_handle_t *pres, const char *pat
 	if (!udata) return EV_ENOMEM;
 	udata->phnd = pres;
 
-	io_uring_prep_open(evi_uring_get_sqe(ev, udata), path, evi_unix_conv_open_flags(flags), mode);
+	io_uring_prep_openat(evi_uring_get_sqe(ev, udata), AT_FDCWD, path, evi_unix_conv_open_flags(flags), mode);
 	io_uring_submit(&ev->async->ctx);
 	return EV_OK;
 }
@@ -184,18 +185,20 @@ ev_code_t ev_socket_connect(ev_t ev, void *ticket, ev_handle_t *pres, ev_proto_t
 	return EV_OK;
 }
 
-ev_code_t ev_proc_wait(ev_t ev, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
-	ev_begin(ev);
+#if IO_URING_VERSION_MINOR > 5
+	ev_code_t ev_proc_wait(ev_t ev, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
+		ev_begin(ev);
 
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_WAIT, ticket);
-	if (!udata) return EV_ENOMEM;
-	udata->wait.pcode = pcode;
-	udata->wait.psig = psig;
+		ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_WAIT, ticket);
+		if (!udata) return EV_ENOMEM;
+		udata->wait.pcode = pcode;
+		udata->wait.psig = psig;
 
-	io_uring_prep_waitid(evi_uring_get_sqe(ev, udata), P_PID, (pid_t)(size_t)proc, &udata->wait.buff, WEXITED | WSTOPPED | WCONTINUED, 0);
-	io_uring_submit(&ev->async->ctx);
-	return EV_OK;
-}
+		io_uring_prep_waitid(evi_uring_get_sqe(ev, udata), P_PID, (pid_t)(size_t)proc, &udata->wait.buff, WEXITED | WSTOPPED | WCONTINUED, 0);
+		io_uring_submit(&ev->async->ctx);
+		return EV_OK;
+	}
+#endif
 
 ev_code_t ev_push(ev_t ev, void *ticket, ev_code_t err) {
 	ev_code_t code = evi_queue_push(ev, ticket, err);
