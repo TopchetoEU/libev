@@ -248,9 +248,10 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 			evi_setup_userpoll(ev);
 			io_uring_cqe_seen(&ev->async->ctx, cqe);
 
-			bool res = evi_queue_pop(ev, pticket, perr);
-			if (res) ev_end(ev);
-			return res;
+			if (evi_queue_pop(ev, pticket, perr)) {
+				ev_end(ev);
+				return true;
+			}
 		}
 		else if (udata->type == EVI_URING_TIMEOUT) {
 			if (udata != timeout_udata) {

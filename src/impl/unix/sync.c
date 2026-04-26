@@ -510,7 +510,8 @@ ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 			if (!buff) return EV_ENOMEM;
 
 			while (true) {
-				if (!getcwd(buff, buffn)) break;
+				errno = 0;
+				if (getcwd(buff, buffn)) break;
 				if (errno != ERANGE) {
 					free(buff);
 					return evi_unix_conv_errno(errno);
