@@ -4,18 +4,20 @@
 #include <ev.h>
 #include <ev/errno.h>
 
-#include <liburing/io_uring.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <liburing.h>
-#include <linux/stat.h>
-#include <fcntl.h>
 #include <stdlib.h>
 #include <signal.h>
+
+#include <linux/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/eventfd.h>
+
+#include <liburing/io_uring.h>
+#include <liburing.h>
 
 #include "../../ev.h"
 #include "../../utils/multithread.h"

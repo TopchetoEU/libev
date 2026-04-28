@@ -3,8 +3,8 @@
 #include <ev/conf.h>
 #include <ev.h>
 
-#include <liburing.h>
 #include <linux/stat.h>
+#include <liburing.h>
 #include <sys/socket.h>
 
 typedef enum {
