@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <signal.h>
 
-#include <linux/stat.h>
+// #include <linux/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
