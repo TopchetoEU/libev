@@ -334,7 +334,10 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 
 static ev_code_t evi_async_init(ev_t ev) {
 	int code;
-	if ((code = io_uring_queue_init(1024, &ev->async->ctx, 0)) < 0) goto fail;
+	if ((code = io_uring_queue_init(1024, &ev->async->ctx, 0)) < 0) {
+		errno = -code;
+		goto fail;
+	}
 
 	ev->async->usermsg_fd = eventfd(0, EFD_CLOEXEC | EFD_SEMAPHORE);
 	if (ev->async->usermsg_fd < 0) goto fail_queue;
