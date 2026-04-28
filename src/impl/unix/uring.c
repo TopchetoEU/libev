@@ -147,7 +147,8 @@ ev_code_t ev_stat(ev_t ev, void *ticket, ev_handle_t fd, ev_stat_t *pres) {
 	mask |= STATX_UID | STATX_GID;
 	mask |= STATX_ATIME | STATX_CTIME | STATX_MTIME;
 	mask |= STATX_SIZE | STATX_BLOCKS;
-	mask |= STATX_INO | STATX_NLINK | STATX_MNT_ID | STATX_MNT_ID_UNIQUE;
+	// mask |= STATX_INO | STATX_NLINK | STATX_MNT_ID | STATX_MNT_ID_UNIQUE;
+	mask |= STATX_INO | STATX_NLINK;
 
 	io_uring_prep_statx(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), "", AT_EMPTY_PATH, mask, &udata->stat.buff);
 	io_uring_submit(&ev->async->ctx);
