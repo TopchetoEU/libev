@@ -18,6 +18,7 @@
 #include <pwd.h>
 #include <time.h>
 #include <dirent.h>
+#include <limits.h>
 
 #include "../../ev.h"
 #include "./utils.c"

@@ -14,7 +14,6 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <poll.h>
-#include <sys/poll.h>
 #include <unistd.h>
 
 #include "../../utils/multithread.h"

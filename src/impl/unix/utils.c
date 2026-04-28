@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
