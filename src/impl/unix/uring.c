@@ -198,6 +198,7 @@ ev_code_t ev_socket_connect(ev_t ev, void *ticket, ev_handle_t *pres, ev_proto_t
 		io_uring_submit(&ev->async->ctx);
 		return EV_OK;
 	}
+	#define EVI_ASYNC_PROC_WAIT
 #endif
 
 ev_code_t ev_push(ev_t ev, void *ticket, ev_code_t err) {
@@ -361,4 +362,3 @@ static ev_code_t evi_async_free(ev_t ev) {
 #define EVI_ASYNC_STAT
 #define EVI_ASYNC_SERVER_ACCEPT
 #define EVI_ASYNC_SOCKET_CONNECT
-#define EVI_ASYNC_PROC_WAIT
