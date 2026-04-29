@@ -416,8 +416,7 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	int code;
 
 	// We still want to resolve a valid loopback IP, even if getaddrinfo
-	if (name == NULL) code = getaddrinfo(name, "80", &hints, &list);
-	else code = getaddrinfo(name, "", &hints, &list);
+	code = getaddrinfo(name, "0", &hints, &list);
 
 	switch (code) {
 		case 0: break;
