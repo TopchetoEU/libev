@@ -214,13 +214,11 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 
 			if (work_done) {
 				if (n < 0) {
-					ev_code_t code = evi_setres(ev, it->ticket, errno, pticket, perr, &set);
-					if (code != EV_OK) return code;
+					evi_setres(ev, it->ticket, errno, pticket, perr, &set);
 				}
 				else {
 					*it->rw.pn = n;
-					ev_code_t code = evi_setres(ev, it->ticket, 0, pticket, perr, &set);
-					if (code != EV_OK) return code;
+					evi_setres(ev, it->ticket, 0, pticket, perr, &set);
 				}
 
 				if (it->next) it->next->slot = it->slot;
@@ -239,12 +237,11 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 			void *ticket;
 			ev_code_t err;
 			if (evi_queue_pop(ev, &ticket, &err)) {
-				ev_code_t code = evi_setres(ev, ticket, err, pticket, perr, &set);
-				if (code != EV_OK) return code;
+				evi_setres(ev, ticket, err, pticket, perr, &set);
 			}
 		}
 
-		return true;
+		if (set) return true;
 	}
 }
 
