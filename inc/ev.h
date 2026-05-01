@@ -204,7 +204,7 @@ ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t 
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 
 // Equivalent to posix's mkdir
-ev_code_t ev_dir_create(ev_t ev, void *udata, const char *path, int mode);
+ev_code_t ev_dir_new(ev_t ev, void *udata, const char *path, int mode);
 // Equivalent to posix's opendir
 ev_code_t ev_dir_open(ev_t ev, void *udata, ev_dir_t *pres, const char *path);
 // Equivalent to posix's readdir
