@@ -14,7 +14,6 @@ typedef enum {
 	EVI_URING_STAT,
 	EVI_URING_RW,
 	EVI_URING_ACCEPT,
-	EVI_URING_BIND,
 	EVI_URING_CONNECT,
 	EVI_URING_WAIT,
 	EVI_URING_SIGWAIT,
@@ -43,15 +42,6 @@ typedef struct {
 			struct sockaddr_storage addr;
 			socklen_t len;
 		} accept;
-		struct {
-			// int sock;
-
-			struct sockaddr_storage addr;
-			int addrlen;
-			size_t max_n;
-
-			ev_server_t *pres;
-		} bind;
 		struct {
 			int sock;
 
