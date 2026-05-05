@@ -94,7 +94,7 @@ static size_t evi_poll(ev_t ev, size_t fd_n, const ev_time_t *ptimeout) {
 			#endif
 		}
 		else {
-			code = poll(ev->async->fds, fd_n, 1000);
+			code = poll(ev->async->fds, fd_n, -1);
 		}
 
 		if (code < 0) {
@@ -172,53 +172,48 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 
 			struct pollfd pollfd = ev->async->fds[it->pollfd_i];
 
-			if (pollfd.revents & POLLHUP) {
-				work_done = true;
-			}
-			else {
-				switch (it->type) {
-					case EVI_POLL_PREAD: {
-						if (pollfd.revents & (POLLIN | POLLERR)) {
-							n = pread(it->fd, it->rw.data, *it->rw.pn, it->rw.offset);
-							pollfd.revents &= ~POLLIN;
-							work_done = true;
-						}
-						break;
+			switch (it->type) {
+				case EVI_POLL_PREAD: {
+					if (pollfd.revents & (POLLIN | POLLERR | POLLHUP)) {
+						n = pread(it->fd, it->rw.data, *it->rw.pn, it->rw.offset);
+						pollfd.revents &= ~POLLIN;
+						work_done = true;
 					}
-					case EVI_POLL_READ: {
-						if (pollfd.revents & (POLLIN | POLLERR)) {
-							n = read(it->fd, it->rw.data, *it->rw.pn);
-							pollfd.revents &= ~POLLIN;
-							work_done = true;
-						}
-						break;
+					break;
+				}
+				case EVI_POLL_READ: {
+					if (pollfd.revents & (POLLIN | POLLERR | POLLHUP)) {
+						n = read(it->fd, it->rw.data, *it->rw.pn);
+						pollfd.revents &= ~POLLIN;
+						work_done = true;
 					}
-					case EVI_POLL_PWRITE: {
-						if (pollfd.revents & (POLLOUT | POLLERR)) {
-							n = pwrite(it->fd, it->rw.data, *it->rw.pn, it->rw.offset);
-							pollfd.revents &= ~POLLOUT;
-							work_done = true;
-						}
-						break;
+					break;
+				}
+				case EVI_POLL_PWRITE: {
+					if (pollfd.revents & (POLLOUT | POLLERR | POLLHUP)) {
+						n = pwrite(it->fd, it->rw.data, *it->rw.pn, it->rw.offset);
+						pollfd.revents &= ~POLLOUT;
+						work_done = true;
 					}
-					case EVI_POLL_WRITE: {
-						if (pollfd.revents & (POLLOUT | POLLERR)) {
-							n = write(it->fd, it->rw.data, *it->rw.pn);
-							pollfd.revents &= ~POLLOUT;
-							work_done = true;
-						}
-						break;
+					break;
+				}
+				case EVI_POLL_WRITE: {
+					if (pollfd.revents & (POLLOUT | POLLERR | POLLHUP)) {
+						n = write(it->fd, it->rw.data, *it->rw.pn);
+						pollfd.revents &= ~POLLOUT;
+						work_done = true;
 					}
+					break;
 				}
 			}
 
 			if (work_done) {
 				if (n < 0) {
-					evi_setres(ev, it->ticket, errno, pticket, perr, &set);
+					evi_setres(ev, it->ticket, evi_unix_conv_errno(errno), pticket, perr, &set);
 				}
 				else {
 					*it->rw.pn = n;
-					evi_setres(ev, it->ticket, 0, pticket, perr, &set);
+					evi_setres(ev, it->ticket, EV_OK, pticket, perr, &set);
 				}
 
 				if (it->next) it->next->slot = it->slot;
