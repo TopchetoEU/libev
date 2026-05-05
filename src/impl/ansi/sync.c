@@ -254,6 +254,45 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	(void)flags;
 	return EV_ENOTSUP;
 }
+
+
+ev_code_t evs_sig_on(ev_signo_t sig) {
+	switch (sig) {
+		case EV_SIGINT: signal(SIGINT, SIG_IGN); break;
+		case EV_SIGABRT: signal(SIGABRT, SIG_IGN); break;
+		case EV_SIGTERM: signal(SIGTERM, SIG_IGN); break;
+
+		case EV_SIGBADMEM: signal(SIGSEGV, SIG_IGN); break;
+		case EV_SIGBADOP: signal(SIGILL, SIG_IGN); break;
+
+		default: break;
+	}
+
+	return EV_OK;
+}
+ev_code_t evs_sig_off(ev_signo_t sig) {
+	switch (sig) {
+		case EV_SIGINT: signal(SIGINT, SIG_DFL); break;
+		case EV_SIGABRT: signal(SIGABRT, SIG_DFL); break;
+		case EV_SIGTERM: signal(SIGTERM, SIG_DFL); break;
+
+		case EV_SIGBADMEM: signal(SIGSEGV, SIG_DFL); break;
+		case EV_SIGBADOP: signal(SIGILL, SIG_DFL); break;
+
+		default: break;
+	}
+
+	return EV_OK;
+}
+ev_code_t evs_sig_wait(ev_signo_t *pres) {
+	// We can't do much more here...
+	while (true);
+}
+ev_code_t ev_sig_wait(ev_t ev, void *udata, ev_signo_t *pres) {
+	ev_begin(ev);
+	return EV_OK;
+}
+
 ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
@@ -355,3 +394,5 @@ static ev_code_t evi_sync_free(ev_t ev) {
 	free(ev->err);
 	return EV_OK;
 }
+
+#define EVI_ASYNC_SIG_WAIT

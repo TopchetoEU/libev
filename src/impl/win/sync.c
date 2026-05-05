@@ -671,6 +671,28 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	*pres = res;
 	return EV_OK;
 }
+
+// TODO: implement
+
+ev_code_t evs_sig_on(ev_signo_t sig) {
+	return EV_OK;
+}
+ev_code_t evs_sig_off(ev_signo_t sig) {
+	return EV_OK;
+}
+ev_code_t evs_sig_wait(ev_signo_t *sig) {
+	// Since signals aren't implemneted, the correct behavior here is to block indefinitely
+	while (true) {
+		Sleep(1000);
+	}
+}
+ev_code_t ev_sig_wait(ev_t ev, void *udata, ev_signo_t *sig) {
+	ev_begin(ev);
+
+	// Completely ignoring this request makes sure its never delivered
+	return EV_OK;
+}
+
 ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
@@ -853,3 +875,5 @@ static ev_code_t evi_sync_free(ev_t ev) {
 	free(ev->err);
 	return EV_OK;
 }
+
+#define EVI_ASYNC_SIG_WAIT
