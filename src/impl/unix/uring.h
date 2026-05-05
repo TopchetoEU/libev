@@ -6,6 +6,7 @@
 // #include <linux/stat.h>
 #include <liburing.h>
 #include <sys/socket.h>
+#include <sys/signalfd.h>
 
 typedef enum {
 	EVI_URING_NONE,
@@ -13,8 +14,10 @@ typedef enum {
 	EVI_URING_STAT,
 	EVI_URING_RW,
 	EVI_URING_ACCEPT,
+	EVI_URING_BIND,
 	EVI_URING_CONNECT,
 	EVI_URING_WAIT,
+	EVI_URING_SIGWAIT,
 
 	// Special, used for eventfd signals
 	EVI_URING_USR,
@@ -49,12 +52,20 @@ typedef struct {
 			int *psig;
 			siginfo_t buff;
 		} wait;
+		struct {
+			struct signalfd_siginfo buff;
+			ev_signo_t *pres;
+		} sig_wait;
 		char usr[8];
 	};
 } *ev_async_udata_t, ev_async_udata_s;
 
 typedef struct ev_async {
 	struct io_uring ctx;
+
 	int usermsg_fd;
+	int signal_fd;
+
 	ev_async_udata_s usermsg_read_udata[1];
+	sigset_t sigset;
 } *ev_async_t, ev_async_s;

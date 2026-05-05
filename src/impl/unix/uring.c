@@ -3,6 +3,7 @@
 #include <ev/conf.h>
 #include <ev.h>
 #include <ev/errno.h>
+#include <ev/signo.h>
 
 #include <stdio.h>
 #include <stdint.h>
@@ -11,6 +12,7 @@
 #include <signal.h>
 
 // #include <linux/stat.h>
+#include <sys/signalfd.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -317,6 +319,19 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 					}
 					*udata->accept.pres = evi_unix_mkfd(cqe->res);
 					break;
+				case EVI_URING_SIGWAIT: {
+					ev_signo_t sig = evi_unix_conv_signal(udata->sig_wait.buff.ssi_signo);
+					if (sig < 0) {
+						evi_uring_get_sqe(ev, udata);
+						io_uring_cqe_seen(&ev->async->ctx, cqe);
+						continue;
+					}
+					else {
+						*udata->sig_wait.pres = sig;
+						break;
+					}
+				}
+
 				default: break;
 			}
 
@@ -342,6 +357,10 @@ static ev_code_t evi_async_init(ev_t ev) {
 	ev->async->usermsg_fd = eventfd(0, EFD_CLOEXEC | EFD_SEMAPHORE);
 	if (ev->async->usermsg_fd < 0) goto fail_queue;
 
+	sigfillset(&ev->async->sigset);
+	ev->async->signal_fd = signalfd(-1, &ev->async->sigset, SFD_CLOEXEC);
+	if (ev->async->signal_fd < 0) goto fail_usermsg;
+
 	memset(&ev->async->usermsg_read_udata->usr, 0, sizeof ev->async->usermsg_read_udata->usr);
 	ev->async->usermsg_read_udata->type = EVI_URING_USR;
 
@@ -349,6 +368,8 @@ static ev_code_t evi_async_init(ev_t ev) {
 
 	return EV_OK;
 
+fail_usermsg:
+	close(ev->async->usermsg_fd);
 fail_queue:
 	io_uring_queue_exit(&ev->async->ctx);
 fail:
@@ -369,3 +390,4 @@ static ev_code_t evi_async_free(ev_t ev) {
 #define EVI_ASYNC_STAT
 #define EVI_ASYNC_SERVER_ACCEPT
 #define EVI_ASYNC_SOCKET_CONNECT
+#define EVI_ASYNC_SIG_WAIT
