@@ -1,9 +1,11 @@
 #pragma once
 
+#include "ev/signo.h"
 #include <ev/conf.h>
 #include <ev.h>
 #include <ev/errno.h>
 
+#include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <netdb.h>
@@ -167,6 +169,26 @@ static void evi_unix_conv_stat(ev_stat_t *dst, struct stat *src) {
 	dst->blksize = src->st_blksize;
 }
 
+static ev_signo_t evi_unix_conv_signal(int sig) {
+	switch (sig) {
+		case SIGHUP: return EV_SIGTLOST;
+		case SIGINT: return EV_SIGINT;
+		case SIGQUIT: return EV_SIGQUIT;
+		case SIGILL: return EV_SIGBADOP;
+		case SIGABRT: return EV_SIGABRT;
+		case SIGBUS: return EV_SIGBADMEM;
+		case SIGFPE: return EV_SIGBADOP;
+		case SIGUSR1: return EV_SIGUSR1;
+		case SIGSEGV: return EV_SIGBADMEM;
+		case SIGUSR2: return EV_SIGUSR2;
+		case SIGPIPE: return EV_SIGBADPIPE;
+		case SIGTERM: return EV_SIGTERM;
+		case SIGSTKFLT: return EV_SIGBADMEM;
+		case SIGWINCH: return EV_SIGTSIZE;
+		case SIGSYS: return EV_SIGBADOP;
+	}
+	return -1;
+}
 static ev_code_t evi_unix_conv_errno(int unixerr) {
 	switch (unixerr) {
 		case EPERM: return EV_EPERM;

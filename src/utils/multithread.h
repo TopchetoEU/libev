@@ -65,13 +65,17 @@
 		void *entry_pargs = args->pargs;
 		free(args);
 
+		sigset_t set;
+		sigfillset(&set);
+		sigdelset(&set, SIGPWR);
+		pthread_sigmask(SIG_SETMASK, &set, NULL);
+
 		struct sigaction sig_act = {
 			.sa_handler = ev_thread_sighandle,
 			.sa_flags = 0,
 		};
 		sigemptyset(&sig_act.sa_mask);
-
-		sigaction(SIGUSR1, &sig_act, NULL);
+		sigaction(SIGPWR, &sig_act, NULL);
 
 		entry(entry_pargs);
 		return NULL;
@@ -81,9 +85,10 @@
 		ev_thread_args_t args = malloc(sizeof *args);
 		args->entry = entry;
 		args->pargs = pargs;
+
 		return pthread_create(th, (const pthread_attr_t*)NULL, ev_thread_entry, args);
 	}
-	#define ev_thread_cancel(th) (void)pthread_kill(*(th), SIGUSR1)
+	#define ev_thread_cancel(th) (void)pthread_kill(*(th), SIGPWR)
 
 	static inline void *ev_thread_free_join(ev_thread_t th) {
 		void *ret;
@@ -95,6 +100,7 @@
 	#define ev_mutex_free(mut) (void)pthread_mutex_destroy(mut)
 	#define ev_mutex_lock(mut) (void)pthread_mutex_lock(mut)
 	#define ev_mutex_unlock(mut) (void)pthread_mutex_unlock(mut)
+	#define ev_setmask pthread_sigmask
 
 	static inline void ev_cond_new(ev_cond_t cond) {
 		pthread_condattr_t attr[1];
@@ -119,4 +125,8 @@
 	#define ev_mutex_free(mut)
 	#define ev_mutex_lock(mut)
 	#define ev_mutex_unlock(mut)
+
+	#if defined EV_USE_UNIX
+		#define ev_setmask sigprocmask
+	#endif
 #endif

@@ -2,9 +2,11 @@
 
 #include <ev/conf.h>
 #include <ev/errno.h>
+#include <ev/signo.h>
 #include <ev/sync.h>
 #include <ev.h>
 
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,11 +23,19 @@
 #include <limits.h>
 
 #include "../../ev.h"
+#include "../../utils/atomic.h"
 #include "./utils.c"
 
 #ifndef __USE_GNU
 	extern char **environ;
 #endif
+
+
+static bool _sig_init = false;
+static int _sig_fd = -1;
+static ev_mutex_t _sig_mut;
+static size_t _sig_counts[EV_SIGUSR2 + 1];
+static sigset_t _sig_set;
 
 static char *evi_generic_getenvpath(const char *suffix) {
 	struct passwd resbuf[1];
@@ -309,6 +319,10 @@ ev_code_t evs_proc_spawn(
 	pid_t pid = fork();
 	if (pid < 0) goto err_err_pipe;
 	if (!pid) { // child
+		sigset_t set;
+		sigemptyset(&set);
+		sigprocmask(SIG_SETMASK, &set, NULL);
+
 		close(status_pipe[0]);
 
 		if (in_child != STDIN_FILENO) {
@@ -461,6 +475,120 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	*pres = res;
 	return EV_OK;
 }
+
+ev_code_t evs_sig_on(ev_signo_t sig) {
+	ev_mutex_lock(_sig_mut);
+
+	if (!_sig_counts[sig]) {
+		sigset_t old_set = _sig_set;
+
+		switch (sig) {
+			case EV_SIGINT: sigaddset(&_sig_set, SIGINT); break;
+			case EV_SIGQUIT: sigaddset(&_sig_set, SIGQUIT); break;
+			case EV_SIGABRT: sigaddset(&_sig_set, SIGABRT); break;
+			case EV_SIGTERM: sigaddset(&_sig_set, SIGTERM); break;
+
+			case EV_SIGBADMEM:
+				sigaddset(&_sig_set, SIGSEGV);
+				sigaddset(&_sig_set, SIGBUS);
+				sigaddset(&_sig_set, SIGSTKFLT);
+				break;
+			case EV_SIGBADOP:
+				sigaddset(&_sig_set, SIGILL);
+				sigaddset(&_sig_set, SIGFPE);
+				sigaddset(&_sig_set, SIGSYS);
+				break;
+			case EV_SIGBADPIPE: sigaddset(&_sig_set, SIGPIPE); break;
+
+			case EV_SIGTSIZE: sigaddset(&_sig_set, SIGWINCH); break;
+			case EV_SIGTLOST: sigaddset(&_sig_set, SIGHUP); break;
+
+			case EV_SIGUSR1: sigaddset(&_sig_set, SIGUSR1); break;
+			case EV_SIGUSR2: sigaddset(&_sig_set, SIGUSR2); break;
+		}
+
+		if (sigprocmask(SIG_SETMASK, &_sig_set, NULL) < 0) {
+			_sig_set = old_set;
+			ev_mutex_unlock(_sig_mut);
+			return evi_unix_conv_errno(errno);
+		}
+	}
+
+	_sig_counts[sig]++;
+
+	ev_mutex_unlock(_sig_mut);
+	return EV_OK;
+}
+ev_code_t evs_sig_off(ev_signo_t sig) {
+	ev_mutex_lock(_sig_mut);
+
+	if (_sig_counts[sig] == 1) {
+		sigset_t old_set = _sig_set;
+
+		switch (sig) {
+			case EV_SIGINT: sigdelset(&_sig_set, SIGINT); break;
+			case EV_SIGQUIT: sigdelset(&_sig_set, SIGQUIT); break;
+			case EV_SIGABRT: sigdelset(&_sig_set, SIGABRT); break;
+			case EV_SIGTERM: sigdelset(&_sig_set, SIGTERM); break;
+
+			case EV_SIGBADMEM:
+				sigdelset(&_sig_set, SIGSEGV);
+				sigdelset(&_sig_set, SIGBUS);
+				sigdelset(&_sig_set, SIGSTKFLT);
+				break;
+			case EV_SIGBADOP:
+				sigdelset(&_sig_set, SIGILL);
+				sigdelset(&_sig_set, SIGFPE);
+				sigdelset(&_sig_set, SIGSYS);
+				break;
+			case EV_SIGBADPIPE: sigdelset(&_sig_set, SIGPIPE); break;
+
+			case EV_SIGTSIZE: sigdelset(&_sig_set, SIGWINCH); break;
+			case EV_SIGTLOST: sigdelset(&_sig_set, SIGHUP); break;
+
+			case EV_SIGUSR1: sigdelset(&_sig_set, SIGUSR1); break;
+			case EV_SIGUSR2: sigdelset(&_sig_set, SIGUSR2); break;
+		}
+
+		if (sigprocmask(SIG_SETMASK, &_sig_set, NULL) < 0) {
+			_sig_set = old_set;
+			ev_mutex_unlock(_sig_mut);
+			return evi_unix_conv_errno(errno);
+		}
+	}
+
+	if (_sig_counts[sig]) {
+		_sig_counts[sig]--;
+	}
+
+	ev_mutex_unlock(_sig_mut);
+	return EV_OK;
+}
+ev_code_t evs_sig_wait(ev_signo_t *pres) {
+	sigset_t old, add_pwr, full;
+	sigfillset(&full);
+	sigemptyset(&add_pwr);
+	sigaddset(&add_pwr, SIGPWR);
+	if (ev_setmask(SIG_BLOCK, &add_pwr, &old) < 0) return evi_unix_conv_errno(errno);
+
+	int res;
+	while (true) {
+		if (sigwait(&full, &res) < 0) return evi_unix_conv_errno(errno);
+
+		if (res == SIGPWR) {
+			ev_setmask(SIG_SETMASK, &old, NULL);
+			return EV_EINTR;
+		}
+
+		ev_signo_t sig = evi_unix_conv_signal(res);
+		if (sig < 0) continue;
+
+		*pres = sig;
+		ev_setmask(SIG_SETMASK, &old, NULL);
+		return EV_OK;
+	}
+}
+
 ev_code_t evs_getpath(char **pres, ev_path_type_t type) {
 	switch (type) {
 		case EV_PATH_HOME: {
@@ -589,6 +717,14 @@ void evs_sleep(ev_time_t time) {
 }
 
 static ev_code_t evi_sync_init(ev_t ev) {
+	if (!_sig_init) {
+		_sig_init = true;
+
+		ev_mutex_new(_sig_mut);
+		memset(_sig_counts, 0, sizeof _sig_counts);
+		sigemptyset(&_sig_set);
+	}
+
 	ev->in = evi_unix_mkfd(STDIN_FILENO);
 	ev->out = evi_unix_mkfd(STDOUT_FILENO);
 	ev->err = evi_unix_mkfd(STDERR_FILENO);
