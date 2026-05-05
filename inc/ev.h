@@ -1,7 +1,8 @@
 #ifndef EV_H
 #define EV_H
 
-#include "ev/errno.h"
+#include <ev/errno.h>
+#include <ev/signo.h>
 
 #include <stdint.h>
 #include <stddef.h>
@@ -236,5 +237,16 @@ ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pco
 
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
+
+// Signal handling utilities. NOTE: these won't correlate to signals 1:1, as signals have a stupid amount of historic baggage
+// Activating one logical ev signal might activate multiple OS signals, or none at all. Furthermore, the set of signals you can
+// receive has been reduced to ones you will want to receive.
+
+// On windows, signals don't exist, so they are "faked" with other facilities.
+// This means that some ev signals will never be produced on windows.
+
+// Blocks until the given signal is received.
+// NOTE: activating a signal and then not calling sig_wait is equivalent to ignoring it
+ev_code_t ev_sig_wait(ev_t ev, void *udata, ev_signo_t *pres);
 
 #endif

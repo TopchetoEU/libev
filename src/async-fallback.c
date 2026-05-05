@@ -11,6 +11,7 @@ an implementation of the ev.h interface function.
 
 #include <ev/conf.h>
 #include <ev/sync.h>
+#include <ev/signo.h>
 #include <ev.h>
 
 #include <stddef.h>
@@ -77,6 +78,8 @@ an implementation of the ev.h interface function.
 
 #define EVI_GETADDRINFO_PARAMS(ARG, SEP) ARG(ev_addrinfo_t*, pres) SEP ARG(const char*, name) SEP ARG(ev_addrinfo_flags_t, flags)
 
+#define EVI_SIG_WAIT_PARAMS(ARG, SEP) ARG(ev_signo_t*, pres)
+
 #ifndef EVI_ASYNC_READ
 	EVI_MKFALLBACK(read, evs_read, EVI_READ_PARAMS)
 #endif
@@ -125,4 +128,7 @@ an implementation of the ev.h interface function.
 #endif
 #ifndef EVI_ASYNC_GETADDRINFO
 	EVI_MKFALLBACK(getaddrinfo, evs_getaddrinfo, EVI_GETADDRINFO_PARAMS)
+#endif
+#ifndef EVI_ASYNC_SIG_WAIT
+	EVI_MKFALLBACK(sig_wait, evs_sig_wait, EVI_SIG_WAIT_PARAMS)
 #endif
