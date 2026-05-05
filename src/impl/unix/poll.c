@@ -83,9 +83,13 @@ static size_t evi_poll(ev_t ev, size_t fd_n, const ev_time_t *ptimeout) {
 		if (ptimeout) {
 			ev_time_t now = { 0 };
 			evs_monotime(&now);
-			ev_time_t diff = ev_timesub(now, *ptimeout);
+			ev_time_t diff = ev_timesub(*ptimeout, now);
 
 			#ifdef _GNU_SOURCE
+				if (diff.sec < 0) {
+					diff.sec = 0;
+					diff.nsec = 0;
+				}
 				code = ppoll(ev->async->fds, fd_n, &(struct timespec) { .tv_sec = diff.sec, .tv_nsec = diff.nsec }, NULL);
 			#else
 				int64_t diff_ms = ev_timems(diff);

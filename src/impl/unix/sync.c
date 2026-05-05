@@ -306,15 +306,12 @@ ev_code_t evs_proc_spawn(
 
 	if (in_flags == EV_SPAWN_STD_PIPE) {
 		if (evi_unix_mkstd(true, &in_parent, &in_child) < 0) goto err_status_pipe;
-		if (fcntl(in_parent, F_SETFD, FD_CLOEXEC) < 0) goto err_in_pipe;
 	}
 	if (out_flags == EV_SPAWN_STD_PIPE) {
 		if (evi_unix_mkstd(false, &out_parent, &out_child) < 0) goto err_in_pipe;
-		if (fcntl(out_parent, F_SETFD, FD_CLOEXEC) < 0) goto err_out_pipe;
 	}
 	if (err_flags == EV_SPAWN_STD_PIPE) {
 		if (evi_unix_mkstd(false, &err_parent, &err_child) < 0) goto err_out_pipe;
-		if (fcntl(err_parent, F_SETFD, FD_CLOEXEC) < 0) goto err_err_pipe;
 	}
 
 	pid_t pid = fork();
