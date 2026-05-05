@@ -4,6 +4,7 @@ local libc = ffi.C;
 ffi.cdef [[
 	typedef int64_t off_t;
 	typedef int ev_code_t;
+	typedef int ev_signo_t;
 
 	void *malloc(size_t n);
 	void free(void *ptr);
@@ -161,8 +162,12 @@ void ev_free(ev_t ev);
 bool ev_busy(ev_t ev);
 
 // Signals to ev that a task has begun. Used to track `ev_busy`
+// ev_exec implicitly calls this
 void ev_begin(ev_t ev);
-// Pushes a result to the message queue
+// Signals to ev that a task has ended. Used to track `ev_busy`
+// ev_exec and ev_push implicitly call this
+void ev_end(ev_t ev);
+// Pushes a result to the message queue. Thread-safe
 // NOTE: using the same udata twice is UB
 ev_code_t ev_push(ev_t ev, void *udata, ev_code_t err);
 // Calls worker with pargs in a ev-managed thread and returns a new ticket to it
@@ -208,7 +213,7 @@ ev_code_t ev_stat(ev_t ev, void *udata, ev_handle_t fd, ev_stat_t *buff);
 // Equivalent to posix's open
 ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
 // A file-specific read function
-ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, const char *buff, size_t *pn, size_t offset);
+ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 // A file-specific write function
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 
@@ -246,8 +251,17 @@ ev_code_t ev_proc_wait(ev_t ev, void *udata, ev_proc_t proc, int *psig, int *pco
 // Equivalent to posix's getaddrinfo (with a few simplifications)
 ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
 
-// Equivalent to posix's getaddrinfo (with a few simplifications)
-ev_code_t ev_getaddrinfo(ev_t ev, void *udata, ev_addrinfo_t *pres, const char *name, ev_addrinfo_flags_t flags);
+// Signal handling utilities. NOTE: these won't correlate to signals 1:1, as signals have a stupid amount of historic baggage
+// Activating one logical ev signal might activate multiple OS signals, or none at all. Furthermore, the set of signals you can
+// receive has been reduced to ones you will want to receive.
+
+// On windows, signals don't exist, so they are "faked" with other facilities.
+// This means that some ev signals will never be produced on windows.
+
+// Blocks until the given signal is received.
+// NOTE: activating a signal and then not calling sig_wait is equivalent to ignoring it
+ev_code_t ev_sig_wait(ev_t ev, void *udata, ev_signo_t *pres);
+
 // Gets a malloc'd string, representing the requested path
 ev_code_t evs_getpath(char **pres, ev_path_type_t type);
 
@@ -270,6 +284,13 @@ ev_code_t evs_monotime(ev_time_t *pres);
 
 // Sleeps until the monotone timestamp provided occurs
 void evs_sleep(ev_time_t time);
+
+// Activates the given signal for receiving. After this call, wait_sig will receive this signal, when generated, as well
+// Internally, both this and ev_sig_off use a refcount, so the two must be called in pairs (calling off is optional,
+// but it must be called no more times than on has been called per signal)
+ev_code_t ev_sig_on(ev_signo_t sig);
+// Deactivates the given signal and restores its default semantics. After this call, wait_sig will no longer receiv eit
+ev_code_t ev_sig_off(ev_signo_t sig);
 
 void evs_close(ev_handle_t fd);
 void evs_dir_close(ev_dir_t dir);
@@ -667,6 +688,26 @@ function ev.getaddrinfo(cb, name, flags)
 
 	return call_wrap(libev.ev_getaddrinfo, handle, pres, name, flags);
 end
+
+function ev.sig_on(signo)
+	local code = libev.evs_sig_on(signo);
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
+end
+function ev.sig_off(signo)
+	local code = libev.evs_sig_off(signo);
+	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
+end
+function ev.sig_wait(cb)
+	local pres = ffi.new "ev_signo_t[1]";
+
+	local function handle(code)
+		if code ~= 0 then return invoke(cb, nil, ffi.string(libev.ev_strerr(code)), code) end
+		return invoke(cb, tonumber(pres[0]));
+	end
+
+	return call_wrap(libev.ev_sig_wait, handle, pres);
+end
+
 function ev.getpath(type)
 	local pres = ffi.new "char*[1]";
 	local code = libev.evs_getpath(pres, type);
@@ -764,6 +805,10 @@ local evs = {
 	server_bind = syncify(ev.server_bind),
 	server_accept = syncify(ev.server_accept),
 	server_close = ev.server_close,
+
+	sig_on = ev.sig_on,
+	sig_off = ev.sig_off,
+	sig_wait = syncify(ev.sig_wait),
 
 	proc_spawn = syncify(ev.proc_spawn),
 	proc_wait = syncify(ev.proc_wait),
@@ -889,6 +934,16 @@ if jit.os ~= "Windows" then
 		coroutine.yield();
 	end);
 end
+
+fork(function ()
+	evs.sig_on(0);
+
+	while true do
+		local sig = evs.sig_wait();
+		print("SIGNAL", sig);
+	end
+end);
+
 
 fork(function ()
 	local base = ev.monotime();
