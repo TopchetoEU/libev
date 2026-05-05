@@ -44,7 +44,20 @@ typedef struct {
 			socklen_t len;
 		} accept;
 		struct {
+			// int sock;
+
+			struct sockaddr_storage addr;
+			int addrlen;
+			size_t max_n;
+
+			ev_server_t *pres;
+		} bind;
+		struct {
 			int sock;
+
+			struct sockaddr_storage addr;
+			int addrlen;
+
 			ev_handle_t *pres;
 		} connect;
 		struct {
