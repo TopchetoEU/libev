@@ -45,13 +45,20 @@
 	#define EV_USE_MULTITHREAD
 #endif
 
+#if __STDC_VERSION__ >= 201100L
+	#define EV_USE_ATOMIC
+#endif
+
 // 4. Apply user blacklists for features
 
 #if defined EV_NO_USE_URING
 	#undef EV_USE_URING
 #endif
 #ifdef EV_NO_USE_MULTITHREAD
-	#undef EV_USE_PTHREAD
+	#undef EV_USE_MULTITHREAD
+#endif
+#ifdef EV_NO_USE_ATOMIC
+	#undef EV_USE_ATOMIC
 #endif
 #ifdef EV_NO_USE_PTHREAD
 	#undef EV_USE_PTHREAD
