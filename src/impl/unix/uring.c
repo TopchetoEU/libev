@@ -191,6 +191,18 @@ ev_code_t ev_socket_connect(ev_t ev, void *ticket, ev_handle_t *pres, ev_proto_t
 	return EV_OK;
 }
 
+ev_code_t ev_sig_wait(ev_t ev, void *ticket, ev_signo_t *pres) {
+	ev_begin(ev);
+
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_SIGWAIT, ticket);
+	if (!udata) return EV_ENOMEM;
+	udata->sig_wait.pres = pres;
+
+	io_uring_prep_read(evi_uring_get_sqe(ev, udata), ev->async->signal_fd, &udata->sig_wait.buff, sizeof udata->sig_wait.buff, 0);
+	io_uring_submit(&ev->async->ctx);
+	return EV_OK;
+}
+
 #if IO_URING_VERSION_MINOR > 5
 	ev_code_t ev_proc_wait(ev_t ev, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
 		ev_begin(ev);
