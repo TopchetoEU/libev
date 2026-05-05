@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -26,13 +27,16 @@
 #include "../../utils/atomic.h"
 #include "./utils.c"
 
+#ifdef EV_USE_URING
+	#include <sys/signalfd.h>
+#endif
+
 #ifndef __USE_GNU
 	extern char **environ;
 #endif
 
 
 static bool _sig_init = false;
-static int _sig_fd = -1;
 static ev_mutex_t _sig_mut;
 static size_t _sig_counts[EV_SIGUSR2 + 1];
 static sigset_t _sig_set;
@@ -321,7 +325,7 @@ ev_code_t evs_proc_spawn(
 	if (!pid) { // child
 		sigset_t set;
 		sigemptyset(&set);
-		sigprocmask(SIG_SETMASK, &set, NULL);
+		ev_setmask(SIG_SETMASK, &set, NULL);
 
 		close(status_pipe[0]);
 
@@ -476,7 +480,9 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	return EV_OK;
 }
 
-ev_code_t evs_sig_on(ev_signo_t sig) {
+ev_code_t ev_sig_on(ev_t ev, ev_signo_t sig) {
+	(void)ev;
+
 	ev_mutex_lock(_sig_mut);
 
 	if (!_sig_counts[sig]) {
@@ -507,11 +513,22 @@ ev_code_t evs_sig_on(ev_signo_t sig) {
 			case EV_SIGUSR2: sigaddset(&_sig_set, SIGUSR2); break;
 		}
 
-		if (sigprocmask(SIG_SETMASK, &_sig_set, NULL) < 0) {
+		if (ev_setmask(SIG_SETMASK, &_sig_set, NULL) < 0) {
 			_sig_set = old_set;
 			ev_mutex_unlock(_sig_mut);
 			return evi_unix_conv_errno(errno);
 		}
+
+		// Very bad solution, come up with a better one if u can
+		#ifdef EV_USE_URING
+			if (signalfd(ev->async->signal_fd, &_sig_set, 0) < 0) {
+				ev_setmask(SIG_SETMASK, &old_set, NULL);
+
+				_sig_set = old_set;
+				ev_mutex_unlock(_sig_mut);
+				return evi_unix_conv_errno(errno);
+			}
+		#endif
 	}
 
 	_sig_counts[sig]++;
@@ -519,7 +536,9 @@ ev_code_t evs_sig_on(ev_signo_t sig) {
 	ev_mutex_unlock(_sig_mut);
 	return EV_OK;
 }
-ev_code_t evs_sig_off(ev_signo_t sig) {
+ev_code_t ev_sig_off(ev_t ev, ev_signo_t sig) {
+	(void)ev;
+
 	ev_mutex_lock(_sig_mut);
 
 	if (_sig_counts[sig] == 1) {
@@ -550,11 +569,22 @@ ev_code_t evs_sig_off(ev_signo_t sig) {
 			case EV_SIGUSR2: sigdelset(&_sig_set, SIGUSR2); break;
 		}
 
-		if (sigprocmask(SIG_SETMASK, &_sig_set, NULL) < 0) {
+		if (ev_setmask(SIG_SETMASK, &_sig_set, NULL) < 0) {
 			_sig_set = old_set;
 			ev_mutex_unlock(_sig_mut);
 			return evi_unix_conv_errno(errno);
 		}
+
+		// Very bad solution, come up with a better one if u can
+		#ifdef EV_USE_URING
+			if (signalfd(ev->async->signal_fd, &_sig_set, 0) < 0) {
+				ev_setmask(SIG_SETMASK, &old_set, NULL);
+
+				_sig_set = old_set;
+				ev_mutex_unlock(_sig_mut);
+				return evi_unix_conv_errno(errno);
+			}
+		#endif
 	}
 
 	if (_sig_counts[sig]) {
@@ -564,6 +594,7 @@ ev_code_t evs_sig_off(ev_signo_t sig) {
 	ev_mutex_unlock(_sig_mut);
 	return EV_OK;
 }
+
 ev_code_t evs_sig_wait(ev_signo_t *pres) {
 	sigset_t old, add_pwr, full;
 	sigfillset(&full);
@@ -580,7 +611,7 @@ ev_code_t evs_sig_wait(ev_signo_t *pres) {
 			return EV_EINTR;
 		}
 
-		ev_signo_t sig = evi_unix_conv_signal(res);
+		int sig = evi_unix_conv_signal(res);
 		if (sig < 0) continue;
 
 		*pres = sig;

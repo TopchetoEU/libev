@@ -288,67 +288,13 @@ void evs_sleep(ev_time_t time);
 // Activates the given signal for receiving. After this call, wait_sig will receive this signal, when generated, as well
 // Internally, both this and ev_sig_off use a refcount, so the two must be called in pairs (calling off is optional,
 // but it must be called no more times than on has been called per signal)
-ev_code_t ev_sig_on(ev_signo_t sig);
+ev_code_t ev_sig_on(ev_t ev, ev_signo_t sig);
 // Deactivates the given signal and restores its default semantics. After this call, wait_sig will no longer receiv eit
-ev_code_t ev_sig_off(ev_signo_t sig);
+ev_code_t ev_sig_off(ev_t ev, ev_signo_t sig);
 
 void evs_close(ev_handle_t fd);
 void evs_dir_close(ev_dir_t dir);
 void evs_server_close(ev_server_t server);
-]];
-
-local libev_dyn = ffi.load(jit.os == "Windows" and "./bin/Windows/libev-dyn.dll" or "./bin/Linux/libev-dyn.so");
-ffi.cdef [[
-// A simple wrapper around libffi, so that ev_exec can be used by dynamic languages
-
-typedef struct ev_dyn_sig *ev_dyn_sig_t;
-typedef struct ev_dyn_args *ev_dyn_args_t;
-
-// Creates a signature, that can then be used in ev_dyn_args_t
-// First type is the return type, the rest are the arguments, no variadic args allowed
-// Return EINVAL if sig's syntax is invalid
-//
-// Types:
-//     v -> void (may not be used as a standalone argument)
-//     c -> char
-//     is -> int
-//     i -> int
-//     il -> long int
-//     ill -> long long int
-//     f -> float
-//     d -> double
-//     dl -> long double
-//     i8 -> int8_t
-//     i16 -> int16_t
-//     i32 -> int32_t
-//     i64 -> int64_t
-//     * -> a pointer
-//     (...types) -> structure of the given types
-//
-// Example: struct { int a; int b; }* (int a, int b, my_ptr_t *c) -> (ii)ii*
-ev_code_t ev_dyn_sig_new(void *func, const char *sig, ev_dyn_sig_t *pres);
-// Releases all resources, used by this signature
-// It goes without saying that this must be called after all callbacks, depending on these have begun execution
-void ev_dyn_sig_free(ev_dyn_sig_t sig);
-
-// Creates arguments for ev_dyn_cb. Freeing the structure is handled by ev_dyn_cb
-// Returns NULL when out of memory (aka EV_ENOMEM is implied)
-ev_dyn_args_t ev_dyn_args_new(ev_dyn_sig_t sig, void *pret, void **args);
-
-// A callback, usable in ev_exec. Always will report EV_OK
-// Must be passed a ev_dyn_args_t
-//
-// Example usage:
-//     ev_dyn_sig_t sig;
-//     ev_dyn_mksig(printf, "i*ii", &sig);
-//
-//     int res;
-//
-//     const char *fmt = "A = %d, B = %d\n";
-//     int a = 10;
-//     int b = 5;
-//     ev_exec(ev_dyn_cb, ev_dyn_mkargs(sig, &res, (void[]) { &fmt, &a, &b }));
-int ev_dyn_cb(void *pargs);
 ]];
 
 local curr_tag = 0;
@@ -690,11 +636,11 @@ function ev.getaddrinfo(cb, name, flags)
 end
 
 function ev.sig_on(signo)
-	local code = libev.evs_sig_on(signo);
+	local code = libev.ev_sig_on(loop, signo);
 	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
 end
 function ev.sig_off(signo)
-	local code = libev.evs_sig_off(signo);
+	local code = libev.ev_sig_off(loop, signo);
 	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)), code end
 end
 function ev.sig_wait(cb)
@@ -747,33 +693,6 @@ function ev.nextenv(pit, ...)
 end
 function ev.iterenv()
 	return ev.nextenv, ffi.new "void *[1]";
-end
-
---- @param str string
-function ev.mksignature(func, str)
-	local pres = ffi.new "ev_dyn_sig_t[1]";
-	local code = libev_dyn.ev_dyn_sig_new(func, str, pres);
-	if code ~= 0 then return nil, ffi.string(libev.ev_strerr(code)) end
-	return function (cb, pret, ...)
-		local args = ffi.new("void*[?]", select("#", ...) + 1);
-		args[select("#", ...)] = nil;
-
-		for i = 1, select("#", ...) do
-			local arg = select(i, ...);
-			if type(arg) == "string" then
-				arg = ffi.cast("char*", arg);
-			end
-
-			local arg_type = ffi.typeof(arg);
-			local slot = ffi.typeof("$[1]", arg_type)();
-			slot[0] = ffi.cast(arg_type, arg);
-			-- slot[0] = arg;
-			args[i - 1] = slot;
-		end
-
-		local pargs = libev_dyn.ev_dyn_args_new(pres[0], pret, args);
-		return call_wrap(libev.ev_exec, cb, libev_dyn.ev_dyn_cb, pargs, false);
-	end
 end
 
 local function syncify(func)
@@ -875,7 +794,7 @@ local function sleep_until(time)
 	return coroutine.yield();
 end
 local function sleep(secs)
-	return sleep_until(secs + monotime());
+	return sleep_until(secs + ev.monotime());
 end
 
 --- @param func fun(...)
@@ -921,28 +840,20 @@ local function netcat(url)
 	evs.close(sock);
 end
 
-fork(netcat, "www.topcheto.eu");
-fork(netcat, "www.example.org");
-
-if jit.os ~= "Windows" then
-	local sig_printf = assert(ev.mksignature(libc.printf, "i*ii"));
-
-	fork(function ()
-		sig_printf(coroutine.running(), ffi.new "int[1]", "A = %d, B = %d\n", ffi.new("int", 10), ffi.new("int", 5));
-		coroutine.yield();
-		sig_printf(coroutine.running(), ffi.new "int[1]", "Hello, world!\n", ffi.new("int", 10), ffi.new("int", 5));
-		coroutine.yield();
-	end);
-end
-
 fork(function ()
 	evs.sig_on(0);
 
 	while true do
 		local sig = evs.sig_wait();
 		print("SIGNAL", sig);
+		if sig == 0 then
+			error "exit";
+		end
 	end
 end);
+
+fork(netcat, "www.topcheto.eu");
+fork(netcat, "www.example.org");
 
 
 fork(function ()

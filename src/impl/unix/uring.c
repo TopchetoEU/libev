@@ -345,10 +345,12 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 					if (udata->connect.sock == -1) {
 						udata->connect.sock = cqe->res;
 
+						io_uring_cqe_seen(&ev->async->ctx, cqe);
 						io_uring_prep_connect(evi_uring_get_sqe(ev, udata),
 							udata->connect.sock,
 							(void*)&udata->connect.addr,
 							udata->connect.addrlen);
+						io_uring_submit(&ev->async->ctx);
 						continue;
 					}
 					else {
@@ -378,10 +380,17 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 					*udata->accept.pres = evi_unix_mkfd(cqe->res);
 					break;
 				case EVI_URING_SIGWAIT: {
-					ev_signo_t sig = evi_unix_conv_signal(udata->sig_wait.buff.ssi_signo);
+					int sig = evi_unix_conv_signal(udata->sig_wait.buff.ssi_signo);
 					if (sig < 0) {
-						evi_uring_get_sqe(ev, udata);
 						io_uring_cqe_seen(&ev->async->ctx, cqe);
+
+						io_uring_prep_read(evi_uring_get_sqe(ev, udata),
+							ev->async->signal_fd,
+							&udata->sig_wait.buff,
+							sizeof udata->sig_wait.buff, 0
+						);
+						io_uring_submit(&ev->async->ctx);
+
 						continue;
 					}
 					else {
@@ -415,8 +424,9 @@ static ev_code_t evi_async_init(ev_t ev) {
 	ev->async->usermsg_fd = eventfd(0, EFD_CLOEXEC | EFD_SEMAPHORE);
 	if (ev->async->usermsg_fd < 0) goto fail_queue;
 
-	sigfillset(&ev->async->sigset);
-	ev->async->signal_fd = signalfd(-1, &ev->async->sigset, SFD_CLOEXEC);
+	sigset_t set;
+	sigemptyset(&set);
+	ev->async->signal_fd = signalfd(-1, &set, SFD_CLOEXEC);
 	if (ev->async->signal_fd < 0) goto fail_usermsg;
 
 	memset(&ev->async->usermsg_read_udata->usr, 0, sizeof ev->async->usermsg_read_udata->usr);

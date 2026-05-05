@@ -80,5 +80,4 @@ typedef struct ev_async {
 	int signal_fd;
 
 	ev_async_udata_s usermsg_read_udata[1];
-	sigset_t sigset;
 } *ev_async_t, ev_async_s;

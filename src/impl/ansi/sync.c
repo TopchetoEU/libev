@@ -255,8 +255,8 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 	return EV_ENOTSUP;
 }
 
-
-ev_code_t evs_sig_on(ev_signo_t sig) {
+ev_code_t ev_sig_on(ev_t ev, ev_signo_t sig) {
+	(void)ev;
 	switch (sig) {
 		case EV_SIGINT: signal(SIGINT, SIG_IGN); break;
 		case EV_SIGABRT: signal(SIGABRT, SIG_IGN); break;
@@ -270,7 +270,8 @@ ev_code_t evs_sig_on(ev_signo_t sig) {
 
 	return EV_OK;
 }
-ev_code_t evs_sig_off(ev_signo_t sig) {
+ev_code_t ev_sig_off(ev_t ev, ev_signo_t sig) {
+	(void)ev;
 	switch (sig) {
 		case EV_SIGINT: signal(SIGINT, SIG_DFL); break;
 		case EV_SIGABRT: signal(SIGABRT, SIG_DFL); break;

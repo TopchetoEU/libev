@@ -60,12 +60,6 @@ ev_code_t evs_monotime(ev_time_t *pres);
 // Sleeps until the monotone timestamp provided occurs
 void evs_sleep(ev_time_t time);
 
-// Activates the given signal for receiving. After this call, wait_sig will receive this signal, when generated, as well
-// Internally, both this and ev_sig_off use a refcount, so the two must be called in pairs (calling off is optional,
-// but it must be called no more times than on has been called per signal)
-ev_code_t ev_sig_on(ev_signo_t sig);
-// Deactivates the given signal and restores its default semantics. After this call, wait_sig will no longer receiv eit
-ev_code_t ev_sig_off(ev_signo_t sig);
 // Blocks until the given signal is received.
 // NOTE: activating a signal and then not calling sig_wait is equivalent to ignoring it
 ev_code_t evs_sig_wait(ev_signo_t *pres);

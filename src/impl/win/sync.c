@@ -674,10 +674,12 @@ ev_code_t evs_getaddrinfo(ev_addrinfo_t *pres, const char *name, ev_addrinfo_fla
 
 // TODO: implement
 
-ev_code_t evs_sig_on(ev_signo_t sig) {
+ev_code_t ev_sig_on(ev_t ev, ev_signo_t sig) {
+	(void)ev;
 	return EV_OK;
 }
-ev_code_t evs_sig_off(ev_signo_t sig) {
+ev_code_t ev_sig_off(ev_t ev, ev_signo_t sig) {
+	(void)ev;
 	return EV_OK;
 }
 ev_code_t evs_sig_wait(ev_signo_t *sig) {
