@@ -93,29 +93,17 @@ static char *evi_unix_getpath(const char *envname, const char *suffix) {
 	return evi_generic_getenvpath(suffix);
 }
 
-static int evi_unix_mkstd(int std_fd, int *pparent, int *pchild, ev_spawn_stdio_flags_t flags, ev_handle_t *pfd) {
-	switch (flags) {
-		case EV_SPAWN_STD_INHERIT:
-			*pparent = *pchild = std_fd;
-			break;
-		case EV_SPAWN_STD_DUP:
-			*pparent = *pchild = evi_unix_fd(*pfd);
-			break;
-		case EV_SPAWN_STD_PIPE: {
-			int pipe_fd[2];
-			if (pipe(pipe_fd) < 0) return -1;
+static int evi_unix_mkstd(bool in, int *pparent, int *pchild) {
+	int pipe_fd[2];
+	if (pipe(pipe_fd) < 0) return -1;
 
-			if (std_fd == STDIN_FILENO) {
-				*pparent = pipe_fd[1];
-				*pchild = pipe_fd[0];
-			}
-			else {
-				*pparent = pipe_fd[0];
-				*pchild = pipe_fd[1];
-			}
-
-			break;
-		}
+	if (in) {
+		*pparent = pipe_fd[1];
+		*pchild = pipe_fd[0];
+	}
+	else {
+		*pparent = pipe_fd[0];
+		*pchild = pipe_fd[1];
 	}
 
 	return 0;
@@ -306,9 +294,9 @@ ev_code_t evs_proc_spawn(
 	ev_spawn_stdio_flags_t out_flags, ev_handle_t *pout,
 	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr
 ) {
-	int in_parent, in_child;
-	int out_parent, out_child;
-	int err_parent, err_child;
+	int in_parent = -1, in_child = -1;
+	int out_parent = -1, out_child = -1;
+	int err_parent = -1, err_child = -1;
 
 	int status_pipe[2];
 
@@ -316,87 +304,111 @@ ev_code_t evs_proc_spawn(
 	if (fcntl(status_pipe[0], F_SETFD, FD_CLOEXEC) < 0) goto err_status_pipe;
 	if (fcntl(status_pipe[1], F_SETFD, FD_CLOEXEC) < 0) goto err_status_pipe;
 
-	if (evi_unix_mkstd(STDIN_FILENO, &in_parent, &in_child, in_flags, pin) < 0) goto err_status_pipe;
-	if (evi_unix_mkstd(STDOUT_FILENO, &out_parent, &out_child, out_flags, pout)) goto err_in_pipe;
-	if (evi_unix_mkstd(STDERR_FILENO, &err_parent, &err_child, err_flags, perr)) goto err_out_pipe;
+	if (in_flags == EV_SPAWN_STD_PIPE) {
+		if (evi_unix_mkstd(true, &in_parent, &in_child) < 0) goto err_status_pipe;
+		if (fcntl(in_parent, F_SETFD, FD_CLOEXEC) < 0) goto err_in_pipe;
+	}
+	if (out_flags == EV_SPAWN_STD_PIPE) {
+		if (evi_unix_mkstd(false, &out_parent, &out_child) < 0) goto err_in_pipe;
+		if (fcntl(out_parent, F_SETFD, FD_CLOEXEC) < 0) goto err_out_pipe;
+	}
+	if (err_flags == EV_SPAWN_STD_PIPE) {
+		if (evi_unix_mkstd(false, &err_parent, &err_child) < 0) goto err_out_pipe;
+		if (fcntl(err_parent, F_SETFD, FD_CLOEXEC) < 0) goto err_err_pipe;
+	}
 
 	pid_t pid = fork();
 	if (pid < 0) goto err_err_pipe;
 	if (!pid) { // child
-		sigset_t set;
-		sigemptyset(&set);
-		ev_setmask(SIG_SETMASK, &set, NULL);
-
 		close(status_pipe[0]);
 
-		if (in_child != STDIN_FILENO) {
+		if (in_child != -1) {
 			if (dup2(in_child, STDIN_FILENO) < 0) goto err_child;
-			close(in_child);
-			if (in_child != in_parent) close(in_parent);
 		}
-		if (out_child != STDOUT_FILENO) {
+		if (out_child != -1) {
 			if (dup2(out_child, STDOUT_FILENO) < 0) goto err_child;
-			close(out_child);
-			if (out_child != out_parent) close(out_parent);
 		}
-		if (err_child != STDERR_FILENO) {
+		if (err_child != -1) {
 			if (dup2(err_child, STDERR_FILENO) < 0) goto err_child;
-			close(err_child);
-			if (err_child != err_parent) close(err_parent);
 		}
 
-		if (cwd) chdir(cwd);
+		if (in_parent != -1) close(in_parent);
+		if (out_parent != -1) close(out_parent);
+		if (err_parent != -1) close(err_parent);
+		in_parent = out_parent = err_parent = -1;
 
+		if (in_child != -1) close(in_child);
+		if (out_child != -1) close(out_child);
+		if (err_child != -1) close(err_child);
+		in_child = out_child = err_child = -1;
+
+		if (cwd) {
+			if (chdir(cwd) < 0) goto err_child;
+		}
+
+		sigset_t set;
+		sigemptyset(&set);
+		if (ev_setmask(SIG_SETMASK, &set, NULL) < 0) goto err_child;
+
+		errno = 0;
 		execve(argv[0], (void*)argv, (void*)env);
-	err_child:
-		write(status_pipe[1], &errno, sizeof errno);
+
+	err_child: ;
+		int err = errno;
+		write(status_pipe[1], &err, sizeof err);
+
+		if (in_child != -1) close(in_child);
+		if (out_child != -1) close(out_child);
+		if (err_child != -1) close(err_child);
+		close(status_pipe[0]);
+
 		_exit(127);
 	}
 
+	if (in_child != -1) close(in_child);
+	if (out_child != -1) close(out_child);
+	if (err_child != -1) close(err_child);
+	in_child = out_child = err_child = -1;
+
 	close(status_pipe[1]);
-	if (in_flags == EV_SPAWN_STD_PIPE) close(in_child);
-	if (out_flags == EV_SPAWN_STD_PIPE) close(out_child);
-	if (err_flags == EV_SPAWN_STD_PIPE) close(err_child);
+	status_pipe[1] = -1;
 
 	int child_code;
-	int code = read(status_pipe[0], &child_code, sizeof child_code);
+	int read_n = read(status_pipe[0], &child_code, sizeof child_code);
 	close(status_pipe[0]);
+	status_pipe[0] = -1;
 
-	if (code < 0) goto err_exec;
-	if (code > 0) {
+	if (read_n < 0) goto err_exec;
+	if (read_n > 0) {
+		assert(read_n == 4);
 		errno = child_code;
 		goto err_exec;
 	}
 
-	if (in_flags == EV_SPAWN_STD_PIPE) *pin = evi_unix_mkfd(in_parent);
-	if (out_flags == EV_SPAWN_STD_PIPE) *pout = evi_unix_mkfd(out_parent);
-	if (err_flags == EV_SPAWN_STD_PIPE) *perr = evi_unix_mkfd(err_parent);
+	if (in_parent != -1) *pin = evi_unix_mkfd(in_parent);
+	if (out_parent != -1) *pout = evi_unix_mkfd(out_parent);
+	if (err_parent != -1) *perr = evi_unix_mkfd(err_parent);
 
 	*pres = (ev_proc_t)(size_t)pid;
 	return 0;
 
 err_exec:
 	if (pid) {
+		// Mostly unnecessary, as child will exit anyways. Still, good to have...
 		waitpid(pid, NULL, 0);
 	}
 err_err_pipe:
-	if (err_flags == EV_SPAWN_STD_PIPE) {
-		close(err_parent);
-		close(err_child);
-	}
+	if (err_parent != -1) close(err_parent);
+	if (err_child != -1) close(err_child);
 err_out_pipe:
-	if (out_flags == EV_SPAWN_STD_PIPE) {
-		close(out_parent);
-		close(out_child);
-	}
+	if (out_parent != -1) close(out_parent);
+	if (out_child != -1) close(out_child);
 err_in_pipe:
-	if (in_flags == EV_SPAWN_STD_PIPE) {
-		close(in_parent);
-		close(in_child);
-	}
+	if (in_parent != -1) close(in_parent);
+	if (in_child != -1) close(in_child);
 err_status_pipe:
-	close(status_pipe[0]);
-	close(status_pipe[1]);
+	if (status_pipe[0] != -1) close(status_pipe[0]);
+	if (status_pipe[1] != -1) close(status_pipe[1]);
 err:
 	return evi_unix_conv_errno(errno);
 }

@@ -456,9 +456,7 @@ function ev.proc_spawn(cb, opts)
 		if fd == "inherit" then
 			return 0, nil;
 		elseif fd == "pipe" then
-			return 2, ffi.new "ev_handle_t[1]";
-		else
-			return 1, ffi.new("ev_handle_t[1]", fd);
+			return 1, ffi.new "ev_handle_t[1]";
 		end
 	end
 
@@ -466,7 +464,7 @@ function ev.proc_spawn(cb, opts)
 	local out_flags, pout = fix_stdfd(opts.stdout);
 	local err_flags, perr = fix_stdfd(opts.stderr);
 
-	local function stddup(str)
+	local function strdup(str)
 		local res = libc.malloc(#str + 1);
 		ffi.copy(res, str);
 		return res;
@@ -474,7 +472,7 @@ function ev.proc_spawn(cb, opts)
 
 	local argv = ffi.cast("const char**", libc.malloc(ffi.sizeof "const char*" * (#opts.argv + 1)));
 	for i = 1, #opts.argv do
-		argv[i - 1] = stddup(opts.argv[i]);
+		argv[i - 1] = strdup(opts.argv[i]);
 	end
 	argv[#opts.argv] = nil;
 
@@ -491,20 +489,20 @@ function ev.proc_spawn(cb, opts)
 
 		local stdin, stdout, stderr;
 
-		if in_flags == 2 and pin then stdin = pin[0] end
-		if out_flags == 2 and pout then stdout = pout[0] end
-		if err_flags == 2 and perr then stderr = perr[0] end
+		if in_flags == 1 and pin then stdin = pin[0] end
+		if out_flags == 1 and pout then stdout = pout[0] end
+		if err_flags == 1 and perr then stderr = perr[0] end
 
 		return invoke(cb, pres[0], stdin, stdout, stderr);
 	end
 
 	for i = 1, #opts.env do
-		env[i - 1] = stddup(opts.env[i][1] .. "=" .. opts.env[i][2]);
+		env[i - 1] = strdup(opts.env[i][1] .. "=" .. opts.env[i][2]);
 	end
 
 	local i = 0;
 	for k, v in pairs(opts.env) do
-		env[#opts.env + i] = stddup(k .. v);
+		env[#opts.env + i] = strdup(k .. v);
 		i = i + 1;
 	end
 
@@ -896,12 +894,12 @@ fork(function ()
 	end);
 end);
 
-fork(function ()
-	for pair in ev.iterenv() do
-		print(pair:match "(.-)=(.*)");
-		interrupt();
-	end
-end);
+-- fork(function ()
+-- 	for pair in ev.iterenv() do
+-- 		print(pair:match "(.-)=(.*)");
+-- 		interrupt();
+-- 	end
+-- end);
 
 assert(run());
 libev.ev_free(loop);

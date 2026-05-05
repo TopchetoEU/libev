@@ -42,8 +42,6 @@ typedef enum {
 typedef enum {
 	// Use parent's stdio handle (default)
 	EV_SPAWN_STD_INHERIT,
-	// Use file descriptor, stored in the ev_fd_t* argument
-	EV_SPAWN_STD_DUP,
 	// Create a dummy file descriptor (pipe), store it in the ev_fd_t* argument and use that for the stdio handle
 	EV_SPAWN_STD_PIPE,
 } ev_spawn_stdio_flags_t;

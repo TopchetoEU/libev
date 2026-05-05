@@ -53,37 +53,20 @@ static char *evi_win_getpath(int id, const wchar_t *suffix) {
 }
 
 static int evi_win_child_std_new(
-	DWORD std,
+	bool in,
 	HANDLE *pparent,
-	HANDLE *pchild,
-	ev_spawn_stdio_flags_t flags,
-	ev_handle_t *pfd
+	HANDLE *pchild
 ) {
-	switch (flags) {
-		case EV_SPAWN_STD_INHERIT: {
-			*pparent = *pchild = GetStdHandle(std);
-			break;
-		}
-		case EV_SPAWN_STD_DUP: {
-			if ((*pfd)->kind != EVI_WIN_HND) return EV_ENOTSUP;
-			*pparent = *pchild = *pfd;
-			break;
-		}
-		case EV_SPAWN_STD_PIPE: {
-			SECURITY_ATTRIBUTES attribs = { .nLength = sizeof attribs, .bInheritHandle = true };
+	SECURITY_ATTRIBUTES attribs = { .nLength = sizeof attribs, .bInheritHandle = true };
 
-			if (std == STD_INPUT_HANDLE) {
-				if (!CreatePipe(pchild, pparent, &attribs, 0)) return -1;
-			}
-			else {
-				if (!CreatePipe(pparent, pchild, &attribs, 0)) return -1;
-			}
-
-			if (!SetHandleInformation(*pparent, HANDLE_FLAG_INHERIT, 0)) return -1;
-
-			break;
-		}
+	if (std == STD_INPUT_HANDLE) {
+		if (!CreatePipe(pchild, pparent, &attribs, 0)) return -1;
 	}
+	else {
+		if (!CreatePipe(pparent, pchild, &attribs, 0)) return -1;
+	}
+
+	if (!SetHandleInformation(*pparent, HANDLE_FLAG_INHERIT, 0)) return -1;
 
 	return 0;
 }
@@ -499,13 +482,19 @@ ev_code_t evs_proc_spawn(
 	ev_spawn_stdio_flags_t out_flags, ev_handle_t *pout,
 	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr
 ) {
-	HANDLE in_parent, in_child;
-	HANDLE out_parent, out_child;
-	HANDLE err_parent, err_child;
+	HANDLE in_parent = NULL, in_child = NULL;
+	HANDLE out_parent = NULL, out_child = NULL;
+	HANDLE err_parent = NULL, err_child = NULL;
 
-	if (evi_win_child_std_new(STD_INPUT_HANDLE, &in_parent, &in_child, in_flags, pin) < 0) goto err;
-	if (evi_win_child_std_new(STD_OUTPUT_HANDLE, &out_parent, &out_child, out_flags, pout) < 0) goto err_in_pipe;
-	if (evi_win_child_std_new(STD_ERROR_HANDLE, &err_parent, &err_child, err_flags, perr) < 0) goto err_out_pipe;
+	if (in_flags == EV_SPAWN_STD_PIPE) {
+		if (evi_win_child_std_new(true, &in_parent, &in_child) < 0) goto err;
+	}
+	if (out_flags == EV_SPAWN_STD_PIPE) {
+		if (evi_win_child_std_new(false, &out_parent, &out_child) < 0) goto err_in_pipe;
+	}
+	if (err_flags == EV_SPAWN_STD_PIPE) {
+		if (evi_win_child_std_new(false, &err_parent, &err_child) < 0) goto err_out_pipe;
+	}
 
 	wchar_t *cmdline = evi_win_argv_to_cmdline(argv);
 	if (!cmdline) goto err_err_pipe;
@@ -534,18 +523,14 @@ ev_code_t evs_proc_spawn(
 	free(procname);
 	free(wcwd);
 
-	if (in_flags == EV_SPAWN_STD_PIPE) {
-		CloseHandle(in_child);
-		*pin = evi_win_mkhnd(in_parent);
-	}
-	if (out_flags == EV_SPAWN_STD_PIPE) {
-		CloseHandle(out_child);
-		*pout = evi_win_mkhnd(out_parent);
-	}
-	if (err_flags == EV_SPAWN_STD_PIPE) {
-		CloseHandle(err_child);
-		*perr = evi_win_mkhnd(err_parent);
-	}
+
+	if (in_child) CloseHandle(in_child);
+	if (out_child) CloseHandle(out_child);
+	if (err_child) CloseHandle(err_child);
+
+	if (in_parent) *pin = evi_win_mkhnd(in_parent);
+	if (out_parent) *pout = evi_win_mkhnd(out_parent);
+	if (err_parent) *perr = evi_win_mkhnd(err_parent);
 
 	*pres = proc_info.hProcess;
 	CloseHandle(proc_info.hThread);
@@ -560,20 +545,14 @@ err_envblock:
 err_cmdline:
 	free(cmdline);
 err_err_pipe:
-	if (err_flags == EV_SPAWN_STD_PIPE) {
-		CloseHandle(err_parent);
-		CloseHandle(err_child);
-	}
+	if (err_parent) CloseHandle(err_parent);
+	if (err_child) CloseHandle(err_child);
 err_out_pipe:
-	if (out_flags == EV_SPAWN_STD_PIPE) {
-		CloseHandle(out_parent);
-		CloseHandle(out_child);
-	}
+	if (out_parent) CloseHandle(out_parent);
+	if (out_child) CloseHandle(out_child);
 err_in_pipe:
-	if (in_flags == EV_SPAWN_STD_PIPE) {
-		CloseHandle(in_parent);
-		CloseHandle(in_child);
-	}
+	if (in_parent) CloseHandle(in_parent);
+	if (in_child) CloseHandle(in_child);
 err:
 	return evi_win_conv_errno(GetLastError());
 }
