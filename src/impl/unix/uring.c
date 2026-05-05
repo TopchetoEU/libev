@@ -157,25 +157,6 @@ ev_code_t ev_stat(ev_t ev, void *ticket, ev_handle_t fd, ev_stat_t *pres) {
 	return EV_OK;
 }
 
-ev_code_t ev_server_bind(ev_t ev, void *ticket, ev_server_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port, size_t max_n) {
-	ev_begin(ev);
-
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_BIND, ticket);
-	if (!udata) return EV_ENOMEM;
-	// udata->bind.sock = -1;
-	udata->bind.pres = pres;
-	udata->bind.max_n = max_n;
-	udata->bind.addrlen = evi_unix_conv_addr(addr, port, &udata->bind.addr);
-
-	io_uring_prep_socket(evi_uring_get_sqe(ev, udata),
-		addr.type == EV_ADDR_IPV4 ? AF_INET : AF_INET6,
-		proto == EV_PROTO_UDP ? SOCK_DGRAM : SOCK_STREAM,
-		proto == EV_PROTO_UDP ? IPPROTO_UDP : IPPROTO_TCP,
-		0
-	);
-	io_uring_submit(&ev->async->ctx);
-	return EV_OK;
-}
 ev_code_t ev_server_accept(ev_t ev, void *ticket, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
 	ev_begin(ev);
 
@@ -327,20 +308,6 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 					evi_unix_conv_sockaddr(&udata->accept.addr, udata->accept.paddr, udata->accept.pport);
 					*udata->accept.pres = evi_unix_mkfd(cqe->res);
 					break;
-				case EVI_URING_BIND: {
-					if (bind(cqe->res, (void*)&udata->bind.addr, udata->bind.addrlen < 0)) {
-						cqe->res = -errno;
-						goto error;
-					}
-
-					if (listen(cqe->res, udata->bind.max_n) < 0) {
-						cqe->res = -errno;
-						goto error;
-					}
-
-					*udata->bind.pres = (void*)(size_t)cqe->res;
-					continue;
-				}
 				case EVI_URING_CONNECT: {
 					if (udata->connect.sock == -1) {
 						udata->connect.sock = cqe->res;
