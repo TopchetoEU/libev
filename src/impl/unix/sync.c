@@ -109,6 +109,11 @@ static int evi_unix_mkstd(bool in, int *pparent, int *pchild) {
 	return 0;
 }
 
+ev_handle_t ev_handle_new(ev_t ev, uint64_t fd) {
+	(void)ev;
+	return evi_unix_mkfd(fd);
+}
+
 ev_code_t evs_read(ev_handle_t fd, char *buff, size_t *pn) {
 	if (!evi_unix_isfd(fd)) return EV_EBADF;
 

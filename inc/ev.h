@@ -175,6 +175,9 @@ ev_handle_t ev_stdout(ev_t ev);
 // Returns a reference to the stderr stream
 ev_handle_t ev_stderr(ev_t ev);
 
+// Creates an ev handle from an OS file descriptor.
+// The file descriptor will be owned (ev_close will close it), and the FD will be with pipe semantics (no seeking)
+ev_handle_t ev_handle_new(ev_t ev, uint64_t fd);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee

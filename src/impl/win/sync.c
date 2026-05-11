@@ -159,6 +159,11 @@ static wchar_t *evi_win_envp_to_envblock(const char **envp) {
 	return buff;
 }
 
+ev_handle_t ev_handle_new(ev_t ev, uint64_t fd) {
+	(void)ev;
+	return evi_win_mkhnd((HANDLE)fd);
+}
+
 ev_code_t evs_read(ev_handle_t fd, char *buff, size_t *pn) {
 	switch (fd->kind) {
 		case EVI_WIN_HND: {

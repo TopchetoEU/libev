@@ -38,6 +38,11 @@ static char *evi_generic_getenvpath(const char *envname, const char *fallback, c
 	}
 }
 
+ev_handle_t ev_handle_new(ev_t ev, uint64_t fd) {
+	(void)ev;
+	return evi_generic_mkfd((FILE*)fd);
+}
+
 ev_code_t evs_read(ev_handle_t fd, char *buff, size_t *pn) {
 	if (!evi_generic_isfd(fd)) return EV_EBADF;
 
