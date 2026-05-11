@@ -12,6 +12,13 @@ void evs_close(ev_handle_t fd);
 ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode);
 ev_code_t evs_file_read(ev_handle_t fd, char *buff, size_t *n, size_t offset);
 ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset);
+ev_code_t evs_file_symlink(const char *path, const char *target);
+ev_code_t evs_file_hardlink(ev_handle_t hnd, const char *target);
+ev_code_t evs_file_readlink(ev_handle_t hnd, char **pres);
+ev_code_t evs_file_chmod(ev_handle_t hnd, int mode);
+ev_code_t evs_file_chown(ev_handle_t hnd, int uid, int gid);
+ev_code_t evs_file_delete(ev_handle_t hnd);
+
 ev_code_t evs_sync(ev_handle_t fd);
 ev_code_t evs_stat(ev_handle_t fd, ev_stat_t *buff);
 

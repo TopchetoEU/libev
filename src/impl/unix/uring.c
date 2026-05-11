@@ -284,7 +284,6 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 			return false;
 		}
 		else if (cqe->res < 0) {
-		error:
 			*pticket = udata->ticket;
 			*perr = evi_unix_conv_errno(-cqe->res);
 

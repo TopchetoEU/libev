@@ -201,6 +201,22 @@ ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 // A file-specific write function
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
+// Creates a symbolic link to path at target
+ev_code_t evs_file_symlink(const char *path, const char *target);
+// Creates a hard link to the file, pointed to by hnd at target
+// On non-unix posix systems, hnd must be a path handle
+ev_code_t evs_file_hardlink(ev_handle_t hnd, const char *target);
+// Reads the given symlink into a malloc'd string
+// On non-unix posix systems, hnd must be a path handle
+ev_code_t evs_file_readlink(ev_handle_t hnd, char **pres);
+// Changes the permissions of the given file
+ev_code_t evs_file_chmod(ev_handle_t hnd, int mode);
+// Changes the owner of the given file
+ev_code_t evs_file_chown(ev_handle_t hnd, int uid, int gid);
+// Deletes the given file
+// On non-unix posix systems, hnd must be a path handle
+// Usage of this file handle after deletion, other than close(), is UB
+ev_code_t evs_file_delete(ev_handle_t hnd);
 
 // Equivalent to posix's mkdir
 ev_code_t ev_dir_new(ev_t ev, void *udata, const char *path, int mode);

@@ -197,6 +197,83 @@ ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 	return EV_OK;
 }
 
+ev_code_t evs_file_symlink(const char *path, const char *target) {
+	if (symlink(path, target) < 0) return evi_unix_conv_errno(errno);
+	return EV_OK;
+}
+ev_code_t evs_file_hardlink(ev_handle_t hnd, const char *target) {
+	#ifdef EV_USE_LINUX
+		if (linkat(evi_unix_fd(hnd), "", AT_FDCWD, target, AT_EMPTY_PATH) < 0) return evi_unix_conv_errno(errno);
+	#else
+		if (evi_unix_isfd(hnd)) return EV_ENOTSUP;
+		if (link(evi_unix_at(hnd), target) < 0) return evi_unix_conv_errno(errno);
+	#endif
+
+	return EV_OK;
+}
+ev_code_t evs_file_readlink(ev_handle_t hnd, char **pres) {
+	struct stat stat;
+	if (evi_unix_isfd(hnd)) {
+		if (fstat(evi_unix_fd(hnd), &stat) < 0) return evi_unix_conv_errno(errno);
+	}
+	else {
+		if (lstat(evi_unix_at(hnd), &stat) < 0) return evi_unix_conv_errno(errno);
+	}
+
+	char *res = malloc(stat.st_size + 1);
+	if (!res) return EV_ENOMEM;
+
+	#ifdef EV_USE_LINUX
+		int n = readlinkat(evi_unix_fd(hnd), "", res, stat.st_size + 1);
+	#else
+		if (evi_unix_isfd(hnd)) {
+			free(res);
+			return EV_ENOTSUP;
+		}
+		int n = readlink(evi_unix_at(hnd), res, stat.st_size + 1);
+	#endif
+
+	if (n < 0) {
+		free(res);
+		return evi_unix_conv_errno(errno);
+	}
+
+	res[n] = 0;
+
+	*pres = res;
+	return EV_OK;
+}
+ev_code_t evs_file_chmod(ev_handle_t hnd, int mode) {
+	if (evi_unix_isfd(hnd)) {
+		if (fchmod(evi_unix_fd(hnd), mode) < 0) return evi_unix_conv_errno(errno);
+	}
+	else {
+		if (chmod(evi_unix_at(hnd), mode) < 0) return evi_unix_conv_errno(errno);
+	}
+
+	return EV_OK;
+}
+ev_code_t evs_file_chown(ev_handle_t hnd, int uid, int gid) {
+	if (evi_unix_isfd(hnd)) {
+		if (fchown(evi_unix_fd(hnd), uid, gid) < 0) return evi_unix_conv_errno(errno);
+	}
+	else {
+		if (chown(evi_unix_at(hnd), uid, gid) < 0) return evi_unix_conv_errno(errno);
+	}
+
+	return EV_OK;
+}
+ev_code_t evs_file_delete(ev_handle_t hnd) {
+	#ifdef EV_USE_LINUX
+		if (unlinkat(evi_unix_fd(hnd), "", AT_EMPTY_PATH) < 0) return evi_unix_conv_errno(errno);
+	#else
+		if (evi_unix_isfd(hnd)) return EV_ENOTSUP;
+		if (unlink(evi_unix_at(hnd)) < 0) return evi_unix_conv_errno(errno);
+	#endif
+
+	return EV_OK;
+}
+
 ev_code_t evs_dir_new(const char *path, int mode) {
 	if (mkdir(path, mode) < 0) return evi_unix_conv_errno(errno);
 	else return EV_OK;

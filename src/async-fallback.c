@@ -53,6 +53,12 @@ an implementation of the ev.h interface function.
 #define EVI_FILE_OPEN_PARAMS(ARG, SEP) ARG(ev_handle_t*, pres) SEP ARG(const char*, path) SEP ARG(ev_open_flags_t, flags) SEP ARG(int, mode)
 #define EVI_FILE_READ_PARAMS(ARG, SEP) ARG(ev_handle_t, handle) SEP ARG(char*, buff) SEP ARG(size_t*, pn) SEP ARG(size_t, offset)
 #define EVI_FILE_WRITE_PARAMS(ARG, SEP) ARG(ev_handle_t, handle) SEP ARG(char*, buff) SEP ARG(size_t*, pn) SEP ARG(size_t, offset)
+#define EVI_FILE_SYMLINK_PARAMS(ARG, SEP) ARG(const char*, path) SEP ARG(const char*, target)
+#define EVI_FILE_HARDLINK_PARAMS(ARG, SEP) ARG(ev_handle_t, hnd) SEP ARG(const char*, target)
+#define EVI_FILE_READLINK_PARAMS(ARG, SEP) ARG(ev_handle_t, hnd) SEP ARG(char**, pres)
+#define EVI_FILE_CHMOD_PARAMS(ARG, SEP) ARG(ev_handle_t, hnd) SEP ARG(int, mode)
+#define EVI_FILE_CHOWN_PARAMS(ARG, SEP) ARG(ev_handle_t, hnd) SEP ARG(int, uid) SEP ARG(int, gid)
+#define EVI_FILE_DELETE_PARAMS(ARG, SEP) ARG(ev_handle_t, hnd)
 
 #define EVI_DIR_NEW_PARAMS(ARG, SEP) ARG(const char*, path) SEP ARG(int, mode)
 #define EVI_DIR_OPEN_PARAMS(ARG, SEP) ARG(ev_dir_t*, pres) SEP ARG(const char*, path)
@@ -131,4 +137,23 @@ an implementation of the ev.h interface function.
 #endif
 #ifndef EVI_ASYNC_SIG_WAIT
 	EVI_MKFALLBACK(sig_wait, evs_sig_wait, EVI_SIG_WAIT_PARAMS)
+#endif
+
+#ifndef EVI_ASYNC_FILE_SYMLINK
+	EVI_MKFALLBACK(file_symlink, evs_file_symlink, EVI_FILE_SYMLINK_PARAMS)
+#endif
+#ifndef EVI_ASYNC_FILE_HARDLINK
+	EVI_MKFALLBACK(file_hardlink, evs_file_hardlink, EVI_FILE_HARDLINK_PARAMS)
+#endif
+#ifndef EVI_ASYNC_FILE_READLINK
+	EVI_MKFALLBACK(file_readlink, evs_file_readlink, EVI_FILE_READLINK_PARAMS)
+#endif
+#ifndef EVI_ASYNC_FILE_CHMOD
+	EVI_MKFALLBACK(file_chmod, evs_file_chmod, EVI_FILE_CHMOD_PARAMS)
+#endif
+#ifndef EVI_ASYNC_FILE_CHOWN
+	EVI_MKFALLBACK(file_chown, evs_file_chown, EVI_FILE_CHOWN_PARAMS)
+#endif
+#ifndef EVI_ASYNC_FILE_DELETE
+	EVI_MKFALLBACK(file_delete, evs_file_delete, EVI_FILE_DELETE_PARAMS)
 #endif
