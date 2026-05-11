@@ -112,31 +112,34 @@
 static int evi_unix_conv_open_flags(ev_open_flags_t flags) {
 	int res = 0;
 
-	if (flags & EV_OPEN_APPEND) {
-		flags |= EV_OPEN_WRITE;
-		res |= O_APPEND;
+	if (flags & EV_OPEN_STAT) {
+		#ifdef EV_USE_LINUX
+			res |= O_PATH;
+		#endif
 	}
-
-	if (flags & EV_OPEN_WRITE) {
-		if (flags & EV_OPEN_READ) {
-			res |= O_RDWR;
-		}
-		else {
-			res |= O_WRONLY;
-		}
-	}
-	else if (flags & EV_OPEN_READ) {
-		res |= O_RDONLY;
-	}
-#ifdef EV_USE_LINUX
 	else {
-		res |= O_PATH;
+		if (flags & EV_OPEN_APPEND) {
+			flags |= EV_OPEN_WRITE;
+			res |= O_APPEND;
+		}
+
+		if (flags & EV_OPEN_WRITE) {
+			if (flags & EV_OPEN_READ) {
+				res |= O_RDWR;
+			}
+			else {
+				res |= O_WRONLY;
+			}
+		}
+		else if (flags & EV_OPEN_READ) {
+			res |= O_RDONLY;
+		}
 	}
-#endif
 
 	if (flags & EV_OPEN_CREATE) res |= O_CREAT;
 	if (flags & EV_OPEN_TRUNC) res |= O_TRUNC;
 	if (flags & EV_OPEN_DIRECT) res |= O_SYNC;
+	if (flags & EV_OPEN_NOFOLLOW) res |= O_NOFOLLOW;
 	if (!(flags & EV_OPEN_SHARED)) res |= O_CLOEXEC;
 
 	return res;

@@ -19,8 +19,6 @@ typedef struct ev_dir *ev_dir_t;
 typedef struct ev_proc *ev_proc_t;
 
 typedef enum {
-	// The file will be usable only for statting (by default allowed)
-	EV_OPEN_STAT = 0,
 	// Opens the file in read mode
 	EV_OPEN_READ = 1,
 	// Opens the file in write mode
@@ -37,6 +35,11 @@ typedef enum {
 	// Keeps the file open after an exec() call
 	// By default, all files, not marked with this, are closed
 	EV_OPEN_SHARED = 64,
+
+	// Doesn't follow symlinks. Useful for statting
+	EV_OPEN_NOFOLLOW = 128,
+	// Opens the file in statting mode. Mutually-exclusive with READ, WRITE and APPEND and takes precedence over them
+	EV_OPEN_STAT= 128,
 } ev_open_flags_t;
 
 typedef enum {
@@ -175,9 +178,6 @@ ev_handle_t ev_stdout(ev_t ev);
 // Returns a reference to the stderr stream
 ev_handle_t ev_stderr(ev_t ev);
 
-// Creates an ev handle from an OS file descriptor.
-// The file descriptor will be owned (ev_close will close it), and the FD will be with pipe semantics (no seeking)
-ev_handle_t ev_handle_new(ev_t ev, uint64_t fd);
 
 // These are the I/O wrapper functions - they will return 0 on success and a negative errno code on error
 // All the other arguments are self-explanatory. All of these functions return their results in a pointer, provided by the callee
@@ -204,22 +204,19 @@ ev_code_t ev_file_open(ev_t ev, void *udata, ev_handle_t *pres, const char *path
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
 // A file-specific write function
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t fd, char *buff, size_t *pn, size_t offset);
-// Creates a symbolic link to path at target
-ev_code_t evs_file_symlink(const char *path, const char *target);
-// Creates a hard link to the file, pointed to by hnd at target
-// On non-unix posix systems, hnd must be a path handle
-ev_code_t evs_file_hardlink(ev_handle_t hnd, const char *target);
-// Reads the given symlink into a malloc'd string
-// On non-unix posix systems, hnd must be a path handle
-ev_code_t evs_file_readlink(ev_handle_t hnd, char **pres);
 // Changes the permissions of the given file
-ev_code_t evs_file_chmod(ev_handle_t hnd, int mode);
+ev_code_t ev_file_chmod(ev_t ev, void *udata, ev_handle_t hnd, int mode);
 // Changes the owner of the given file
-ev_code_t evs_file_chown(ev_handle_t hnd, int uid, int gid);
+ev_code_t ev_file_chown(ev_t ev, void *udata, ev_handle_t hnd, int uid, int gid);
+
+// Creates a symbolic link to path at target
+ev_code_t ev_file_symlink(ev_t ev, void *udata, const char *src, const char *dst);
+// Creates a hard link to the file
+ev_code_t ev_file_hardlink(ev_t ev, void *udata, const char *src, const char *dst);
+// Reads the given symlink into a malloc'd string
+ev_code_t ev_file_readlink(ev_t ev, void *udata, const char *path, char **pres);
 // Deletes the given file
-// On non-unix posix systems, hnd must be a path handle
-// Usage of this file handle after deletion, other than close(), is UB
-ev_code_t evs_file_delete(ev_handle_t hnd);
+ev_code_t ev_file_delete(ev_t ev, void *udata, const char *path);
 
 // Equivalent to posix's mkdir
 ev_code_t ev_dir_new(ev_t ev, void *udata, const char *path, int mode);

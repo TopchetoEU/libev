@@ -179,6 +179,26 @@ ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *pn, size_t offset) 
 	*pn = n;
 	return EV_OK;
 }
+ev_code_t evs_file_chmod(ev_handle_t hnd, int mode) {
+	return EV_OK;
+}
+ev_code_t evs_file_chown(ev_handle_t hnd, int uid, int gid) {
+	return EV_OK;
+}
+
+ev_code_t evs_file_symlink(const char *path, const char *target) {
+	return EV_ENOTSUP;
+}
+ev_code_t evs_file_hardlink(const char *path, const char *target) {
+	return EV_ENOTSUP;
+}
+ev_code_t evs_file_readlink(const char *path, char **pres) {
+	return EV_ENOTSUP;
+}
+ev_code_t evs_file_delete(const char *path) {
+	if (remove(path) < 0) return EV_ENOENT;
+	return EV_OK;
+}
 
 ev_code_t evs_dir_new(const char *path, int mode) {
 	(void)path;

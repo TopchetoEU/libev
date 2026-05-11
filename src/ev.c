@@ -5,15 +5,10 @@
 #include <ev.h>
 #include <ev/errno.h>
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
-#include <time.h>
-#include <ctype.h>
 
 #include "./ev.h"
-#include "./utils/multithread.h"
 
 // Source files included here for a unity build
 

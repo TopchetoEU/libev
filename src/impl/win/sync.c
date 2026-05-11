@@ -289,20 +289,22 @@ ev_code_t evs_file_open(ev_handle_t *pres, const char *path, ev_open_flags_t fla
 	SECURITY_ATTRIBUTES sec_attribs = { 0 };
 	sec_attribs.nLength = sizeof sec_attribs;
 
-	if (flags & EV_OPEN_APPEND) {
-		flags |= EV_OPEN_WRITE;
-	}
+	if (!(flags & EV_OPEN_STAT)) {
+		if (flags & EV_OPEN_APPEND) {
+			flags |= EV_OPEN_WRITE;
+		}
 
-	if (flags & EV_OPEN_READ) {
-		access |= FILE_GENERIC_READ;
-		access_others &= ~(FILE_SHARE_DELETE);
-	}
-	if (flags & EV_OPEN_WRITE) {
-		access |= FILE_GENERIC_WRITE;
-		access_others &= ~(FILE_SHARE_DELETE | FILE_SHARE_WRITE);
+		if (flags & EV_OPEN_READ) {
+			access |= FILE_GENERIC_READ;
+			access_others &= ~(FILE_SHARE_DELETE);
+		}
+		if (flags & EV_OPEN_WRITE) {
+			access |= FILE_GENERIC_WRITE;
+			access_others &= ~(FILE_SHARE_DELETE | FILE_SHARE_WRITE);
 
-		if (!(flags & EV_OPEN_APPEND)) {
-			access &= ~FILE_APPEND_DATA;
+			if (!(flags & EV_OPEN_APPEND)) {
+				access &= ~FILE_APPEND_DATA;
+			}
 		}
 	}
 
@@ -363,6 +365,63 @@ ev_code_t evs_file_write(ev_handle_t fd, char *buff, size_t *n, size_t offset) {
 		return evi_win_conv_errno(GetLastError());
 	}
 	*n = out_n;
+	return EV_OK;
+}
+ev_code_t evs_file_chmod(ev_handle_t hnd, int mode) {
+	return EV_OK;
+}
+ev_code_t evs_file_chown(ev_handle_t hnd, int uid, int gid) {
+	return EV_OK;
+}
+
+ev_code_t evs_file_symlink(const char *path, const char *target) {
+	wchar_t *wpath = evi_win_conv_utf8(path, 0);
+	if (!wpath) return evi_win_conv_errno(GetLastError());
+
+	wchar_t *wtarget = evi_win_conv_utf8(target, 0);
+	if (!wpath) {
+		free(wpath);
+		return evi_win_conv_errno(GetLastError());
+	}
+
+	// TODO: handle directories
+	bool res = CreateSymbolicLinkW(wtarget, wpath, 0);
+	free(wpath);
+	free(wtarget);
+
+	if (!res) return evi_win_conv_errno(GetLastError());
+	return EV_OK;
+}
+ev_code_t evs_file_hardlink(const char *path, const char *target) {
+	wchar_t *wpath = evi_win_conv_utf8(path, 0);
+	if (!wpath) return evi_win_conv_errno(GetLastError());
+
+	wchar_t *wtarget = evi_win_conv_utf8(target, 0);
+	if (!wpath) {
+		free(wpath);
+		return evi_win_conv_errno(GetLastError());
+	}
+
+	// TODO: handle directories
+	bool res = CreatHardLinkW(wtarget, wpath, 0);
+	free(wpath);
+	free(wtarget);
+
+	if (!res) return evi_win_conv_errno(GetLastError());
+	return EV_OK;
+}
+ev_code_t evs_file_readlink(const char *path, char **pres) {
+	// Tough luck
+	return EV_ENOTSUP;
+}
+ev_code_t evs_file_delete(const char *path) {
+	wchar_t *wpath = evi_win_conv_utf8(path, 0);
+	if (!wpath) return evi_win_conv_errno(GetLastError());
+
+	bool res = DeleteFileW(wpath);
+	free(wpath);
+
+	if (!res) return evi_win_conv_errno(GetLastError());
 	return EV_OK;
 }
 
