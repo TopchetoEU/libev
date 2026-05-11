@@ -184,6 +184,8 @@ ev_handle_t ev_stderr(ev_t ev);
 
 // A handle roughly equates to a fd (or a windows HANDLE/socket). Such may be an opened file, socket, tty or a pipe.
 
+// Creates a handle from an OS-specific FD
+ev_handle_t ev_handle_new(ev_t ev, uint64_t fd);
 // Equivalent to posix's read
 ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn);
 // Equivalent to posix's write
