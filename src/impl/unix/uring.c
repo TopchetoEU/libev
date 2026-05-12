@@ -422,7 +422,6 @@ static ev_code_t evi_async_free(ev_t ev) {
 #define EVI_ASYNC_FILE_WRITE
 #define EVI_ASYNC_SYNC
 #define EVI_ASYNC_STAT
-#define EVI_ASYNC_SERVER_BIND
 #define EVI_ASYNC_SERVER_ACCEPT
 #define EVI_ASYNC_SOCKET_CONNECT
 #define EVI_ASYNC_SIG_WAIT
