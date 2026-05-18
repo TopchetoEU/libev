@@ -72,74 +72,66 @@ static void evi_setup_userpoll(ev_t ev) {
 }
 
 ev_code_t ev_read(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_read(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), buff, *n, -1);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 ev_code_t ev_write(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_write(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), buff, *n, -1);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 
 ev_code_t ev_file_open(ev_t ev, void *ticket, ev_handle_t *pres, const char *path, ev_open_flags_t flags, int mode) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_OPEN, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->phnd = pres;
 
 	io_uring_prep_openat(evi_uring_get_sqe(ev, udata), AT_FDCWD, path, evi_unix_conv_open_flags(flags), mode);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 ev_code_t ev_file_read(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_read(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), buff, *n, offset);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 ev_code_t ev_file_write(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->pn = n;
 
 	io_uring_prep_write(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), buff, *n, offset);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 ev_code_t ev_sync(ev_t ev, void *ticket, ev_handle_t fd) {
-	ev_begin(ev);
-
-	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_RW, ticket);
+	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_SYNC, ticket);
 	if (!udata) return EV_ENOMEM;
 
 	io_uring_prep_fsync(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), 0);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 ev_code_t ev_stat(ev_t ev, void *ticket, ev_handle_t fd, ev_stat_t *pres) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_STAT, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->stat.pres = pres;
@@ -154,12 +146,11 @@ ev_code_t ev_stat(ev_t ev, void *ticket, ev_handle_t fd, ev_stat_t *pres) {
 
 	io_uring_prep_statx(evi_uring_get_sqe(ev, udata), evi_unix_fd(fd), "", AT_EMPTY_PATH, mask, &udata->stat.buff);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 
 ev_code_t ev_server_accept(ev_t ev, void *ticket, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_ACCEPT, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->accept.pres = pres;
@@ -169,12 +160,11 @@ ev_code_t ev_server_accept(ev_t ev, void *ticket, ev_handle_t *pres, ev_addr_t *
 
 	io_uring_prep_accept(evi_uring_get_sqe(ev, udata), (int)(size_t)server, (void*)&udata->accept.addr, &udata->accept.len, 0);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 
 ev_code_t ev_socket_connect(ev_t ev, void *ticket, ev_handle_t *pres, ev_proto_t proto, ev_addr_t addr, uint16_t port) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_CONNECT, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->connect.pres = pres;
@@ -188,25 +178,23 @@ ev_code_t ev_socket_connect(ev_t ev, void *ticket, ev_handle_t *pres, ev_proto_t
 		0
 	);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 
 ev_code_t ev_sig_wait(ev_t ev, void *ticket, ev_signo_t *pres) {
-	ev_begin(ev);
-
 	ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_SIGWAIT, ticket);
 	if (!udata) return EV_ENOMEM;
 	udata->sig_wait.pres = pres;
 
 	io_uring_prep_read(evi_uring_get_sqe(ev, udata), ev->async->signal_fd, &udata->sig_wait.buff, sizeof udata->sig_wait.buff, 0);
 	io_uring_submit(&ev->async->ctx);
+	ev_begin(ev);
 	return EV_OK;
 }
 
 #if IO_URING_VERSION_MINOR > 5
 	ev_code_t ev_proc_wait(ev_t ev, void *ticket, ev_proc_t proc, int *psig, int *pcode) {
-		ev_begin(ev);
-
 		ev_async_udata_t udata = evi_uring_mkudata(EVI_URING_WAIT, ticket);
 		if (!udata) return EV_ENOMEM;
 		udata->wait.pcode = pcode;
@@ -214,6 +202,7 @@ ev_code_t ev_sig_wait(ev_t ev, void *ticket, ev_signo_t *pres) {
 
 		io_uring_prep_waitid(evi_uring_get_sqe(ev, udata), P_PID, (pid_t)(size_t)proc, &udata->wait.buff, WEXITED | WSTOPPED | WCONTINUED, 0);
 		io_uring_submit(&ev->async->ctx);
+		ev_begin(ev);
 		return EV_OK;
 	}
 	#define EVI_ASYNC_PROC_WAIT
@@ -227,11 +216,6 @@ ev_code_t ev_push(ev_t ev, void *ticket, ev_code_t err) {
 	return EV_OK;
 }
 bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
-	if (evi_queue_pop(ev, pticket, perr)) {
-		ev_end(ev);
-		return true;
-	}
-
 	ev_async_udata_t timeout_udata = NULL;
 
 	if (ptimeout) {
@@ -251,11 +235,17 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 	}
 
 	while (true) {
+		if (evi_queue_pop(ev, pticket, perr)) {
+			ev_end(ev);
+			return true;
+		}
+
 		struct io_uring_cqe *cqe;
 
 		io_uring_submit(&ev->async->ctx);
 		int code = io_uring_wait_cqe(&ev->async->ctx, &cqe);
 		if (code == -EINTR) continue;
+		assert(code >= 0 && "uring poll failed");
 
 		ev_async_udata_t udata = (ev_async_udata_t)(size_t)cqe->user_data;
 		if (!udata) {
@@ -266,15 +256,16 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 		if (udata->type == EVI_URING_USR) {
 			evi_setup_userpoll(ev);
 			io_uring_cqe_seen(&ev->async->ctx, cqe);
-
-			if (evi_queue_pop(ev, pticket, perr)) {
-				ev_end(ev);
-				return true;
-			}
+			continue;
 		}
 		else if (udata->type == EVI_URING_TIMEOUT) {
 			if (udata != timeout_udata) {
-				// TODO: what to do if we catch something we shouldn't've
+				// This was a past timeout, which we didn't reach. However, we still get the stale event
+				io_uring_prep_timeout_remove(evi_uring_get_sqe(ev, NULL), (uint64_t)(size_t)udata, 0);
+
+				free(udata);
+				io_uring_cqe_seen(&ev->async->ctx, cqe);
+				continue;
 			}
 
 			io_uring_prep_timeout_remove(evi_uring_get_sqe(ev, NULL), (uint64_t)(size_t)udata, 0);
@@ -302,6 +293,8 @@ bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
 					break;
 				case EVI_URING_RW:
 					*udata->pn = cqe->res;
+					break;
+				case EVI_URING_SYNC:
 					break;
 				case EVI_URING_ACCEPT:
 					evi_unix_conv_sockaddr(&udata->accept.addr, udata->accept.paddr, udata->accept.pport);
