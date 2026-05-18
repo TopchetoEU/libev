@@ -33,13 +33,16 @@ static void evi_pool_worker_entry(void *pargs) {
 			void *args = worker->args;
 
 			ev_mutex_unlock(worker->lock);
-			ev_code_t code = cb(args);
+			ev_code_t code;
+
+			// TODO: eventually implement cancellations with this
+			while ((code = cb(args)) == -EV_EINTR);
+
 			ev_mutex_lock(worker->lock);
 
 			worker->worker = NULL;
 			worker->args = NULL;
 			worker->udata = NULL;
-
 			ev_push(worker->ev, udata, code);
 		}
 		if (worker->kys) break;
@@ -57,9 +60,9 @@ static ev_code_t evi_pool_exec(ev_t ev, ev_pool_t pool, void *udata, ev_worker_t
 			it->worker = worker;
 			it->args = pargs;
 			it->udata = udata;
-			ev_begin(ev);
 			ev_cond_broadcast(it->cond);
 			ev_mutex_unlock(it->lock);
+			ev_begin(ev);
 			return EV_OK;
 		}
 		ev_mutex_unlock(it->lock);
