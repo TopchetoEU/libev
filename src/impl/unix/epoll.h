@@ -26,4 +26,5 @@ typedef struct ev_async {
 	ev_pl_s pl[1];
 	ev_epoll_fd_t head;
 	int epoll_fd;
+	int timer_fd;
 } *ev_async_t, ev_async_s;

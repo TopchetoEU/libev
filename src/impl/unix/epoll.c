@@ -1,13 +1,15 @@
 #pragma once
 
-#include <asm-generic/errno-base.h>
 #include <assert.h>
+#include <bits/time.h>
+#include <bits/types/struct_itimerspec.h>
 #include <ev/conf.h>
 #include <ev/sync.h>
 #include <ev/errno.h>
 
 #include <stdlib.h>
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
 #include <time.h>
 #include <err.h>
 
@@ -117,33 +119,36 @@ error:
 
 static ev_pl_res_t evi_pl_impl_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, ev_code_t *perr) {
 	struct epoll_event evn = { 0 };
-	struct timespec ts_timeout;
-	struct timespec *pts_timeout = NULL;
 
 	if (ptimeout) {
 		ev_time_t tmp;
 		evs_monotime(&tmp);
-		tmp = ev_timesub(tmp, *ptimeout);
+		if (ev_timecmp(tmp, *ptimeout) > 0) return EV_POLL_TIMEOUT;
 
-		if (tmp.sec < 0) {
-			ts_timeout.tv_sec = 0;
-			ts_timeout.tv_nsec = 0;
-		}
-		else {
-			ts_timeout.tv_sec = tmp.sec;
-			ts_timeout.tv_nsec = tmp.nsec;
-		}
-
-		pts_timeout = &ts_timeout;
+		timerfd_settime(ev->async->timer_fd, TFD_TIMER_ABSTIME, &(struct itimerspec) {
+			.it_value = { ptimeout->sec, ptimeout->nsec },
+			.it_interval = { 0, 0 }
+		}, NULL);
+	}
+	else {
+		timerfd_settime(ev->async->timer_fd, 0, &(struct itimerspec) {
+			.it_value = { 0, 0 },
+			.it_interval = { 0, 0 }
+		}, NULL);
 	}
 
 	int n;
-	while ((n = epoll_pwait2(ev->async->epoll_fd, &evn, 1, pts_timeout, NULL)) < 0) {
+	while ((n = epoll_wait(ev->async->epoll_fd, &evn, 1, -1)) < 0) {
 		if (errno != EINTR) err(1, "failed to poll");
 	}
 	if (n == 0) {
 		if (ptimeout) return EV_POLL_TIMEOUT;
 		else return EV_POLL_EMPTY;
+	}
+
+	if (evn.data.fd == ev->async->timer_fd) {
+		assert(ptimeout != NULL && "timer returned without a timeout");
+		return EV_POLL_TIMEOUT;
 	}
 
 	ev_epoll_fd_t fd = evn.data.ptr;
@@ -187,11 +192,27 @@ static ev_pl_res_t evi_pl_impl_poll(ev_t ev, const ev_time_t *ptimeout, void **p
 
 static ev_code_t evi_pl_impl_init(ev_t ev) {
 	ev->async->epoll_fd = epoll_create(16);
+	if (ev->async->epoll_fd < 0) goto err;
+
+	ev->async->timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+	if (ev->async->timer_fd < 0) goto err_epoll;
+
+	if (epoll_ctl(ev->async->epoll_fd, EPOLL_CTL_ADD, ev->async->timer_fd, &(struct epoll_event) {
+		.events = evi_epoll_type_to_mask(EVI_POLL_READ),
+		.data.fd = ev->async->timer_fd,
+	}) < 0) goto err_timer;
+
 	ev->async->head = NULL;
 
 	return EV_OK;
+err_timer:
+	close(ev->async->timer_fd);
+err_epoll:
+	close(ev->async->epoll_fd);
+err:
+	return evi_unix_conv_errno(errno);
 }
 static ev_code_t evi_pl_impl_free(ev_t ev) {
-	(void)ev;
+	close(ev->async->epoll_fd);
 	return EV_OK;
 }
