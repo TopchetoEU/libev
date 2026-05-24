@@ -91,48 +91,61 @@ ev_code_t ev_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *
 
 	ev_begin(ev);
 
-	return evi_pl_impl_add(ev, (ev_pl_event_t) {
+	ev_code_t code = evi_pl_impl_add(ev, (ev_pl_event_t) {
 		.ticket = udata,
 		.type = EVI_POLL_READ,
 		.fd = evi_unix_fd(stream),
 		.rw = { .data = buff, .pn = pn },
 	});
+
+	// The handle doesn't support epoll, it must go thru the sync route
+	if (code == EV_EPERM) return ev_push(ev, udata, evs_read(stream, buff, pn));
+	return code;
 }
 ev_code_t ev_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn) {
 	if (!evi_unix_isfd(stream)) return EV_EBADF;
 
 	ev_begin(ev);
 
-	return evi_pl_impl_add(ev, (ev_pl_event_t) {
+	ev_code_t code = evi_pl_impl_add(ev, (ev_pl_event_t) {
 		.ticket = udata,
 		.type = EVI_POLL_WRITE,
 		.fd = evi_unix_fd(stream),
 		.rw = { .data = buff, .pn = pn },
 	});
+
+	if (code == EV_EPERM) return ev_push(ev, udata, evs_write(stream, buff, pn));
+	return code;
 }
 ev_code_t ev_file_read(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn, size_t offset) {
 	if (!evi_unix_isfd(stream)) return EV_EBADF;
 
 	ev_begin(ev);
 
-	return evi_pl_impl_add(ev, (ev_pl_event_t) {
+	ev_code_t code = evi_pl_impl_add(ev, (ev_pl_event_t) {
 		.ticket = udata,
 		.type = EVI_POLL_PREAD,
 		.fd = evi_unix_fd(stream),
 		.rw = { .data = buff, .pn = pn, .offset = offset },
 	});
+
+	if (code == EV_EPERM) return ev_push(ev, udata, evs_file_read(stream, buff, pn, offset));
+	return code;
 }
 ev_code_t ev_file_write(ev_t ev, void *udata, ev_handle_t stream, char *buff, size_t *pn, size_t offset) {
 	if (!evi_unix_isfd(stream)) return EV_EBADF;
 
 	ev_begin(ev);
 
-	return evi_pl_impl_add(ev, (ev_pl_event_t) {
+	ev_code_t code = evi_pl_impl_add(ev, (ev_pl_event_t) {
 		.ticket = udata,
 		.type = EVI_POLL_PWRITE,
 		.fd = evi_unix_fd(stream),
 		.rw = { .data = buff, .pn = pn, .offset = offset },
 	});
+
+	if (code == EV_EPERM) return ev_push(ev, udata, evs_file_write(stream, buff, pn, offset));
+	return code;
 }
 ev_code_t ev_server_accept(ev_t ev, void *udata, ev_handle_t *pres, ev_addr_t *paddr, uint16_t *pport, ev_server_t server) {
 	ev_begin(ev);
