@@ -1,6 +1,5 @@
 #pragma once
 
-#include <asm-generic/errno-base.h>
 #include <assert.h>
 #include <ev/conf.h>
 #include <ev/sync.h>
