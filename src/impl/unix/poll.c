@@ -1,27 +1,18 @@
 #pragma once
-#include <time.h>
-#include <assert.h>
-#include <errno.h>
+
 #include <ev/conf.h>
-#include <ev.h>
+#include <ev/sync.h>
 #include <ev/errno.h>
+#include <ev.h>
 
-#include <stddef.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
-#include <fcntl.h>
-#include <stdlib.h>
-#include <sys/socket.h>
-#include <poll.h>
-#include <unistd.h>
+#include <sys/poll.h>
 
-#include "../../utils/multithread.h"
-#include "../../utils/queue.c"
 #include "./poll.h"
+#include "./pollish.h"
 
-#include "./utils.c"
-
+#include "../async.h"
+#include "../../ev.h"
+#include "./pollish.c"
 
 static uint64_t evi_async_subms_diff(ev_time_t timeout) {
 	ev_time_t now;
@@ -66,8 +57,8 @@ static bool evi_poll_addfd(ev_async_t async, int fd, bool write, size_t *pn, siz
 	return true;
 }
 
-static ev_poll_req_t evi_poll_pushreq(ev_t ev) {
-	ev_poll_req_t req = malloc(sizeof *req);
+static ev_poll_node_t evi_poll_pushreq(ev_t ev) {
+	ev_poll_node_t req = malloc(sizeof *req);
 	if (!req) return NULL;
 
 	if (ev->async->req_head) ev->async->req_head->slot = &req->next;
@@ -110,227 +101,73 @@ static size_t evi_poll(ev_t ev, size_t fd_n, const ev_time_t *ptimeout) {
 	}
 }
 
-static ev_code_t evi_setres(ev_t ev, void *ticket, ev_code_t err, void **pticket, ev_code_t *perr, bool *set) {
-	if (*set) {
-		ev_code_t code = evi_queue_push(ev, ticket, err);
-		if (code != EV_OK) return code;
-	}
-	else {
-		*pticket = ticket;
-		*perr = err;
-		*set = true;
-		ev_end(ev);
-	}
+ev_code_t evi_pl_impl_add(ev_t ev, ev_pl_event_t evn) {
+	ev_poll_node_t node = evi_poll_pushreq(ev);
+	if (!node) return EV_ENOMEM;
 
+	node->evn = evn;
 	return EV_OK;
 }
 
-ev_code_t ev_push(ev_t ev, void *ticket, ev_code_t err) {
-	ev_code_t code = evi_queue_push(ev, ticket, err);
-	if (code != EV_OK) return code;
+static ev_pl_res_t evi_pl_impl_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, ev_code_t *perr) {
+	size_t fd_n = 0;
+	size_t usermsg_pollfd_i;
+	if (!evi_poll_addfd(ev->async, ev->async->pl->usermsg_read, false, &fd_n, &usermsg_pollfd_i)) return EV_POLL_TIMEOUT;
 
-	if (write(ev->async->usermsg_write, &(uint8_t) { 0 }, sizeof(uint8_t)) < 0) {
-		if (errno == EWOULDBLOCK) return EV_OK;
-		return evi_unix_conv_errno(errno);
+	for (ev_poll_node_t it = ev->async->req_head; it; it = it->next) {
+		switch (it->evn.type) {
+			case EVI_POLL_PREAD:
+			case EVI_POLL_READ:
+			case EVI_POLL_ACCEPT: {
+				if (!evi_poll_addfd(ev->async, it->evn.fd, false, &fd_n, &it->pollfd_i)) return EV_POLL_TIMEOUT;
+				break;
+			}
+			case EVI_POLL_PWRITE:
+			case EVI_POLL_WRITE: {
+				if (!evi_poll_addfd(ev->async, it->evn.fd, true, &fd_n, &it->pollfd_i)) return EV_POLL_TIMEOUT;
+				break;
+			}
+		}
 	}
-	return EV_OK;
-}
-bool ev_poll(ev_t ev, const ev_time_t *ptimeout, void **pticket, int *perr) {
-	while (true) {
-		if (evi_queue_pop(ev, pticket, perr)) {
-			ev_end(ev);
-			return true;
+
+	evi_poll(ev, fd_n, ptimeout);
+
+	for (ev_poll_node_t it = ev->async->req_head; it; it = it->next) {
+		struct pollfd pollfd = ev->async->fds[it->pollfd_i];
+		int mask = 0;
+
+		switch (it->evn.type) {
+			case EVI_POLL_ACCEPT:
+			case EVI_POLL_READ:
+			case EVI_POLL_PREAD: mask = POLLIN | POLLERR | POLLHUP; break;
+
+			case EVI_POLL_WRITE:
+			case EVI_POLL_PWRITE: mask = POLLOUT | POLLERR | POLLHUP; break;
 		}
 
-		size_t fd_n = 0;
-		size_t usermsg_pollfd_i;
-		if (!evi_poll_addfd(ev->async, ev->async->usermsg_read, false, &fd_n, &usermsg_pollfd_i)) return EV_ENOMEM;
-
-		for (ev_poll_req_t it = ev->async->req_head; it; it = it->next) {
-			switch (it->type) {
-				case EVI_POLL_PREAD:
-				case EVI_POLL_READ: {
-					if (!evi_poll_addfd(ev->async, it->fd, false, &fd_n, &it->pollfd_i)) return EV_ENOMEM;
-					break;
-				}
-				case EVI_POLL_PWRITE:
-				case EVI_POLL_WRITE: {
-					if (!evi_poll_addfd(ev->async, it->fd, true, &fd_n, &it->pollfd_i)) return EV_ENOMEM;
-					break;
-				}
-			}
-		}
-
-		size_t n = evi_poll(ev, fd_n, ptimeout);
-		if (!n) {
-			if (ptimeout) return false;
-			continue;
-		}
-
-		bool set = false;
-
-		for (ev_poll_req_t it = ev->async->req_head; it; ) {
-			ev_poll_req_t next = it->next;
-			bool work_done = false;
-			ssize_t n = 0;
-
-			struct pollfd pollfd = ev->async->fds[it->pollfd_i];
-
-			switch (it->type) {
-				case EVI_POLL_PREAD: {
-					if (pollfd.revents & (POLLIN | POLLERR | POLLHUP)) {
-						n = pread(it->fd, it->rw.data, *it->rw.pn, it->rw.offset);
-						pollfd.revents &= ~POLLIN;
-						work_done = true;
-					}
-					break;
-				}
-				case EVI_POLL_READ: {
-					if (pollfd.revents & (POLLIN | POLLERR | POLLHUP)) {
-						n = read(it->fd, it->rw.data, *it->rw.pn);
-						pollfd.revents &= ~POLLIN;
-						work_done = true;
-					}
-					break;
-				}
-				case EVI_POLL_PWRITE: {
-					if (pollfd.revents & (POLLOUT | POLLERR | POLLHUP)) {
-						n = pwrite(it->fd, it->rw.data, *it->rw.pn, it->rw.offset);
-						pollfd.revents &= ~POLLOUT;
-						work_done = true;
-					}
-					break;
-				}
-				case EVI_POLL_WRITE: {
-					if (pollfd.revents & (POLLOUT | POLLERR | POLLHUP)) {
-						n = write(it->fd, it->rw.data, *it->rw.pn);
-						pollfd.revents &= ~POLLOUT;
-						work_done = true;
-					}
-					break;
-				}
-			}
-
-			if (work_done) {
-				if (n < 0) {
-					evi_setres(ev, it->ticket, evi_unix_conv_errno(errno), pticket, perr, &set);
-				}
-				else {
-					*it->rw.pn = n;
-					evi_setres(ev, it->ticket, EV_OK, pticket, perr, &set);
-				}
-
+		if (pollfd.revents & mask) {
+			if (evi_pl_cb(ev, &it->evn, pticket, perr)) {
 				if (it->next) it->next->slot = it->slot;
 				*it->slot = it->next;
-
 				free(it);
-			}
 
-			it = next;
-		}
-
-		if (ev->async->fds[usermsg_pollfd_i].revents & POLLIN) {
-			uint8_t dummy;
-			read(ev->async->usermsg_read, &dummy, sizeof dummy);
-
-			void *ticket;
-			ev_code_t err;
-			if (evi_queue_pop(ev, &ticket, &err)) {
-				evi_setres(ev, ticket, err, pticket, perr, &set);
+				return EV_POLL_OK;
 			}
 		}
-
-		if (set) return true;
 	}
+
+	if (ptimeout) return EV_POLL_TIMEOUT;
+	return EV_POLL_EMPTY;
 }
 
-ev_code_t ev_read(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
-	ev_poll_req_t req = evi_poll_pushreq(ev);
-	if (!req) return EV_ENOMEM;
-
-	ev_begin(ev);
-	if (!evi_unix_isfd(fd)) return ev_push(ev, ticket, EV_EBADF);
-
-	req->type = EVI_POLL_READ;
-	req->ticket = ticket;
-	req->fd = evi_unix_fd(fd);
-	req->rw.data = buff;
-	req->rw.pn = n;
-	return EV_OK;
-}
-ev_code_t ev_write(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n) {
-	ev_poll_req_t req = evi_poll_pushreq(ev);
-	if (!req) return EV_ENOMEM;
-
-	ev_begin(ev);
-	if (!evi_unix_isfd(fd)) return ev_push(ev, ticket, EV_EBADF);
-
-	req->type = EVI_POLL_WRITE;
-	req->ticket = ticket;
-	req->fd = evi_unix_fd(fd);
-	req->rw.data = buff;
-	req->rw.pn = n;
-	return EV_OK;
-}
-ev_code_t ev_file_read(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
-	ev_poll_req_t req = evi_poll_pushreq(ev);
-	if (!req) return EV_ENOMEM;
-
-	ev_begin(ev);
-	if (!evi_unix_isfd(fd)) return ev_push(ev, ticket, EV_EBADF);
-
-	req->type = EVI_POLL_PREAD;
-	req->ticket = ticket;
-	req->fd = evi_unix_fd(fd);
-	req->rw.data = buff;
-	req->rw.pn = n;
-	req->rw.offset = offset;
-	return EV_OK;
-}
-ev_code_t ev_file_write(ev_t ev, void *ticket, ev_handle_t fd, char *buff, size_t *n, size_t offset) {
-	ev_poll_req_t req = evi_poll_pushreq(ev);
-	if (!req) return EV_ENOMEM;
-
-	ev_begin(ev);
-	if (!evi_unix_isfd(fd)) return ev_push(ev, ticket, EV_EBADF);
-
-	req->type = EVI_POLL_PWRITE;
-	req->ticket = ticket;
-	req->fd = evi_unix_fd(fd);
-	req->rw.data = buff;
-	req->rw.pn = n;
-	req->rw.offset = offset;
-	return EV_OK;
-}
-
-static ev_code_t evi_async_init(ev_t ev) {
-	int msg_pipe[2];
-	if (pipe(msg_pipe) < 0) goto fail;
-	if (fcntl(msg_pipe[0], F_SETFD, O_NONBLOCK) < 0) goto fail_pipe;
-	if (fcntl(msg_pipe[1], F_SETFD, O_NONBLOCK) < 0) goto fail_pipe;
-
+static ev_code_t evi_pl_impl_init(ev_t ev) {
 	ev->async->fds = NULL;
 	ev->async->fds_cap = 0;
 	ev->async->req_head = NULL;
 
-	ev->async->usermsg_read = msg_pipe[0];
-	ev->async->usermsg_write = msg_pipe[1];
-
-	return EV_OK;
-
-fail_pipe:
-	close(msg_pipe[0]);
-	close(msg_pipe[1]);
-fail:
-	return evi_unix_conv_errno(errno);
-}
-static ev_code_t evi_async_free(ev_t ev) {
-	close(ev->async->usermsg_read);
-	close(ev->async->usermsg_write);
 	return EV_OK;
 }
-
-#define EVI_ASYNC_READ
-#define EVI_ASYNC_WRITE
-#define EVI_ASYNC_FILE_READ
-#define EVI_ASYNC_FILE_WRITE
+static ev_code_t evi_pl_impl_free(ev_t ev) {
+	(void)ev;
+	return EV_OK;
+}
