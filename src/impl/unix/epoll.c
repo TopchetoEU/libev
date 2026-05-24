@@ -1,17 +1,14 @@
 #pragma once
 
-#include <assert.h>
-#include <bits/time.h>
-#include <bits/types/struct_itimerspec.h>
 #include <ev/conf.h>
 #include <ev/sync.h>
 #include <ev/errno.h>
 
 #include <stdlib.h>
+#include <assert.h>
+#include <err.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
-#include <time.h>
-#include <err.h>
 
 #include "./epoll.h"
 #include "./pollish.h"
