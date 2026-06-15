@@ -40,7 +40,8 @@ ev_code_t evs_proc_spawn(
 	const char *cwd,
 	ev_spawn_stdio_flags_t in_flags, ev_handle_t *pin,
 	ev_spawn_stdio_flags_t out_flags, ev_handle_t *pout,
-	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr
+	ev_spawn_stdio_flags_t err_flags, ev_handle_t *perr,
+	ev_spawn_flags_t flags
 );
 ev_code_t evs_proc_wait(ev_proc_t proc, int *psig, int *pcode);
 

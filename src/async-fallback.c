@@ -76,7 +76,8 @@ an implementation of the ev.h interface function.
 	ARG(const char*, cwd) SEP \
 	ARG(ev_spawn_stdio_flags_t, in_flags) SEP ARG(ev_handle_t*, pin) SEP \
 	ARG(ev_spawn_stdio_flags_t, out_flags) SEP ARG(ev_handle_t*, pout) SEP \
-	ARG(ev_spawn_stdio_flags_t, err_flags) SEP ARG(ev_handle_t*, perr)
+	ARG(ev_spawn_stdio_flags_t, err_flags) SEP ARG(ev_handle_t*, perr) SEP \
+	ARG(ev_spawn_flags_t, flags)
 #define EVI_PROC_WAIT_PARAMS(ARG, SEP) \
 	ARG(ev_proc_t, proc) SEP \
 	ARG(int*, psig) SEP \
