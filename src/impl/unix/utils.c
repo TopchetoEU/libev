@@ -270,6 +270,7 @@ static ev_code_t evi_unix_conv_errno(int unixerr) {
 		case EREMOTEIO: return EV_EREMOTEIO;
 		case ENOMEDIUM: return EV_ENOMEDIUM;
 		case ECANCELED: return EV_ECANCELED;
+		case 0: return EV_OK;
 		case -1: return EV_EUNKNOWN;
 		default: return EV_EUNKNOWN;
 	}
@@ -291,6 +292,7 @@ static ev_code_t evi_unix_conv_aierr(int aierr) {
 			case EAI_CANCELED: return EV_EAI_CANCELED;
 		#endif
 
+		case 0: return EV_OK;
 		default: return EV_EUNKNOWN;
 	}
 }

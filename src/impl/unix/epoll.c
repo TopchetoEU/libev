@@ -77,7 +77,7 @@ ev_code_t evi_pl_impl_add(ev_t ev, ev_pl_event_t evn) {
 		.events = evi_epoll_fd_to_mask(fd),
 	}) == 0) {
 		if (ev->async->head) ev->async->head->slot = &fd->next;
-		fd->next = fd;
+		fd->next = ev->async->head;
 		fd->slot = &ev->async->head;
 		ev->async->head = fd;
 		return EV_OK;
