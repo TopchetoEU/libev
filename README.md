@@ -1,3 +1,5 @@
+**You are viewing an outdated mirror of [libyaooi](https://git.topcheto.eu/libyaooi), formerly libev. Please, change your link/remote now!**
+
 libev is a dead-simple alternative to libuv for performing platform-specific operations in a non-blocking and platform-independent way.
 
 ## Core architecture
